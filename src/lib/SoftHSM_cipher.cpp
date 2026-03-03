@@ -1319,13 +1319,18 @@ struct GcmMsgCtx
 {
 	CK_ULONG keyLen;
 	uint8_t  keyData[GCM_MSG_KEY_MAX];
+	CK_ULONG accumCipherLen; // total ciphertext fed by intermediate DecryptMessageNext calls
 };
 
 // ─── IV generation helper ────────────────────────────────────────────────────
 static CK_RV generateGcmIv(CK_GCM_MESSAGE_PARAMS* p)
 {
-	if (p->ivGenerator == CKG_NO_GENERATE)
-		return CKR_OK; // caller provides IV
+	if (p->ivGenerator == CKG_NO_GENERATE) {
+		// Caller provides IV — validate it is present.
+		if (p->pIv == NULL_PTR || p->ulIvLen == 0)
+			return CKR_ARGUMENTS_BAD;
+		return CKR_OK;
+	}
 
 	// For all generate variants (random, counter, counter-XOR), fill with random bytes.
 	// Counter-mode IV generation (fixed prefix + incrementing counter) can be layered
@@ -1382,16 +1387,19 @@ static CK_RV aesgcmEncryptOneShot(
 	ByteString finalPart;
 
 	if (!cipher->encryptUpdate(plain, cipherOut)) {
+		cipher->recycleKey(symKey);
 		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
 		return CKR_GENERAL_ERROR;
 	}
 	if (!cipher->encryptFinal(finalPart)) {
+		cipher->recycleKey(symKey);
 		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
 		return CKR_GENERAL_ERROR;
 	}
 
 	// GCM: cipherOut has the ciphertext bytes; finalPart has the tag.
 	if (cipherOut.size() != ulPlainLen || finalPart.size() != tagBytes) {
+		cipher->recycleKey(symKey);
 		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
 		return CKR_GENERAL_ERROR;
 	}
@@ -1445,10 +1453,12 @@ static CK_RV aesgcmDecryptOneShot(
 	ByteString finalPart;
 
 	if (!cipher->decryptUpdate(aeadBuf, plainOut)) {
+		cipher->recycleKey(symKey);
 		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
 		return CKR_ENCRYPTED_DATA_INVALID;
 	}
 	if (!cipher->decryptFinal(finalPart)) {
+		cipher->recycleKey(symKey);
 		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
 		return CKR_ENCRYPTED_DATA_INVALID;
 	}
@@ -1492,6 +1502,7 @@ CK_RV SoftHSM::MsgAesGcmInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMecha
 	GcmMsgCtx ctx;
 	ctx.keyLen = (CK_ULONG)bits.size();
 	memcpy(ctx.keyData, bits.const_byte_str(), bits.size());
+	ctx.accumCipherLen = 0;
 
 	if (!session->setParameters(&ctx, sizeof(ctx)))
 		return CKR_HOST_MEMORY;
@@ -1658,6 +1669,19 @@ CK_RV SoftHSM::C_EncryptMessageNext(CK_SESSION_HANDLE hSession,
 
 	size_t tagBytes = cipher->getTagBytes();
 
+	// GCM: ciphertext length == plaintext length (no padding).
+	// Check buffer BEFORE invoking the cipher so caller can retry with a
+	// larger buffer without losing the streaming cipher state.
+	CK_ULONG needLen = (CK_ULONG)ulPlaintextPartLen;
+	if (pCiphertextPart == NULL_PTR) {
+		*pulCiphertextPartLen = needLen;
+		return CKR_OK; // cipher preserved; caller retries with a real buffer
+	}
+	if (*pulCiphertextPartLen < needLen) {
+		*pulCiphertextPartLen = needLen;
+		return CKR_BUFFER_TOO_SMALL; // cipher preserved; caller retries
+	}
+
 	ByteString plain(pPlaintextPart, ulPlaintextPartLen);
 	ByteString cipherOut;
 	ByteString finalPart;
@@ -1671,27 +1695,16 @@ CK_RV SoftHSM::C_EncryptMessageNext(CK_SESSION_HANDLE hSession,
 		return CKR_GENERAL_ERROR;
 	}
 
-	// finalPart = tag (for GCM); write cipherOut to caller
-	CK_ULONG needLen = (CK_ULONG)cipherOut.size();
-	if (pCiphertextPart == NULL_PTR) {
-		*pulCiphertextPartLen = needLen;
-		// Note: cipher is now consumed (encryptFinal called). Reset to recover.
-		session->setSymmetricCryptoOp(NULL); // recycles cipher + key
-		session->setOpType(SESSION_OP_MESSAGE_ENCRYPT);
-		return CKR_OK;
-	}
-	if (*pulCiphertextPartLen < needLen) {
-		*pulCiphertextPartLen = needLen;
+	// Strict tag length assertion — backend must produce exactly tagBytes.
+	if (finalPart.size() != tagBytes) {
 		session->setSymmetricCryptoOp(NULL);
 		session->setOpType(SESSION_OP_MESSAGE_ENCRYPT);
-		return CKR_BUFFER_TOO_SMALL;
+		return CKR_GENERAL_ERROR;
 	}
 
 	if (cipherOut.size() > 0) memcpy(pCiphertextPart, cipherOut.byte_str(), cipherOut.size());
 	*pulCiphertextPartLen = (CK_ULONG)cipherOut.size();
-
-	if (finalPart.size() >= tagBytes)
-		memcpy(p->pTag, finalPart.byte_str(), tagBytes);
+	memcpy(p->pTag, finalPart.byte_str(), tagBytes);
 
 	// Tear down streaming cipher; GcmMsgCtx in param survives for the next message
 	session->setSymmetricCryptoOp(NULL); // recycles cipher + key
@@ -1706,7 +1719,11 @@ CK_RV SoftHSM::C_MessageEncryptFinal(CK_SESSION_HANDLE hSession)
 	auto sessionGuard = handleManager->getSessionShared(hSession);
 	Session* session = sessionGuard.get();
 	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
-	if (session->getOpType() != SESSION_OP_MESSAGE_ENCRYPT)
+	// Accept _BEGIN state too: caller may call Final to abandon a streaming message
+	// (i.e., after EncryptMessageBegin but before a CKF_END_OF_MESSAGE Next).
+	CK_ULONG opType = session->getOpType();
+	if (opType != SESSION_OP_MESSAGE_ENCRYPT &&
+	    opType != SESSION_OP_MESSAGE_ENCRYPT_BEGIN)
 		return CKR_OPERATION_NOT_INITIALIZED;
 	session->resetOp(); // frees GcmMsgCtx param + any leftover cipher
 	return CKR_OK;
@@ -1806,6 +1823,7 @@ CK_RV SoftHSM::C_DecryptMessageBegin(CK_SESSION_HANDLE hSession,
 		return CKR_MECHANISM_INVALID;
 	}
 
+	ctx->accumCipherLen = 0; // reset for new streaming message
 	session->setSymmetricCryptoOp(cipher);
 	session->setSymmetricKey(symKey);
 	session->setAllowMultiPartOp(true);
@@ -1838,6 +1856,10 @@ CK_RV SoftHSM::C_DecryptMessageNext(CK_SESSION_HANDLE hSession,
 	SymmetricAlgorithm* cipher = session->getSymmetricCryptoOp();
 	if (cipher == NULL) return CKR_OPERATION_NOT_INITIALIZED;
 
+	size_t ctxLen;
+	GcmMsgCtx* ctx = (GcmMsgCtx*)session->getParameters(ctxLen);
+	if (ctx == NULL || ctxLen < sizeof(GcmMsgCtx)) return CKR_OPERATION_NOT_INITIALIZED;
+
 	bool isLast = (flags & CKF_END_OF_MESSAGE) != 0;
 
 	if (!isLast) {
@@ -1850,6 +1872,7 @@ CK_RV SoftHSM::C_DecryptMessageNext(CK_SESSION_HANDLE hSession,
 				session->resetOp();
 				return CKR_ENCRYPTED_DATA_INVALID;
 			}
+			ctx->accumCipherLen += (CK_ULONG)ulCiphertextPartLen;
 		}
 		*pulPlaintextPartLen = 0;
 		return CKR_OK;
@@ -1863,9 +1886,23 @@ CK_RV SoftHSM::C_DecryptMessageNext(CK_SESSION_HANDLE hSession,
 
 	size_t tagBytes = cipher->getTagBytes();
 
+	// GCM: plaintext length = total accumulated ciphertext (all intermediate chunks + this chunk).
+	// This is known before running decryptFinal, so the buffer check can precede the crypto,
+	// leaving the cipher context intact for a retry if the buffer is too small.
+	CK_ULONG thisCipherLen = (pCiphertextPart != NULL_PTR) ? (CK_ULONG)ulCiphertextPartLen : 0;
+	CK_ULONG totalPlain = ctx->accumCipherLen + thisCipherLen;
+
+	if (pPlaintextPart == NULL_PTR) {
+		*pulPlaintextPartLen = totalPlain;
+		return CKR_OK; // cipher preserved; caller retries with a real buffer
+	}
+	if (*pulPlaintextPartLen < totalPlain) {
+		*pulPlaintextPartLen = totalPlain;
+		return CKR_BUFFER_TOO_SMALL; // cipher preserved; caller retries
+	}
+
 	// Feed any final ciphertext chunk; then append tag so OSSL can verify it.
 	// OSSL GCM decryptFinal reads the last tagBytes from the AEAD buffer as the tag.
-	ByteString tagAndFinal;
 	if (pCiphertextPart != NULL_PTR && ulCiphertextPartLen > 0) {
 		ByteString cipherChunk(pCiphertextPart, ulCiphertextPartLen);
 		ByteString dummy;
@@ -1889,22 +1926,10 @@ CK_RV SoftHSM::C_DecryptMessageNext(CK_SESSION_HANDLE hSession,
 	}
 
 	CK_ULONG plainLen = (CK_ULONG)plainOut.size();
-	if (pPlaintextPart == NULL_PTR) {
-		*pulPlaintextPartLen = plainLen;
-		session->setSymmetricCryptoOp(NULL);
-		session->setOpType(SESSION_OP_MESSAGE_DECRYPT);
-		return CKR_OK;
-	}
-	if (*pulPlaintextPartLen < plainLen) {
-		*pulPlaintextPartLen = plainLen;
-		session->setSymmetricCryptoOp(NULL);
-		session->setOpType(SESSION_OP_MESSAGE_DECRYPT);
-		return CKR_BUFFER_TOO_SMALL;
-	}
-
 	if (plainLen > 0) memcpy(pPlaintextPart, plainOut.byte_str(), plainLen);
 	*pulPlaintextPartLen = plainLen;
 
+	// Tear down streaming cipher; GcmMsgCtx in param survives for the next message
 	session->setSymmetricCryptoOp(NULL);
 	session->setOpType(SESSION_OP_MESSAGE_DECRYPT);
 	return CKR_OK;
@@ -1917,7 +1942,11 @@ CK_RV SoftHSM::C_MessageDecryptFinal(CK_SESSION_HANDLE hSession)
 	auto sessionGuard = handleManager->getSessionShared(hSession);
 	Session* session = sessionGuard.get();
 	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
-	if (session->getOpType() != SESSION_OP_MESSAGE_DECRYPT)
+	// Accept _BEGIN state too: caller may call Final to abandon a streaming message
+	// (i.e., after DecryptMessageBegin but before a CKF_END_OF_MESSAGE Next).
+	CK_ULONG opType = session->getOpType();
+	if (opType != SESSION_OP_MESSAGE_DECRYPT &&
+	    opType != SESSION_OP_MESSAGE_DECRYPT_BEGIN)
 		return CKR_OPERATION_NOT_INITIALIZED;
 	session->resetOp(); // frees GcmMsgCtx param + any leftover cipher
 	return CKR_OK;
