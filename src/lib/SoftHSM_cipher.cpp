@@ -1325,16 +1325,28 @@ struct GcmMsgCtx
 // ─── IV generation helper ────────────────────────────────────────────────────
 static CK_RV generateGcmIv(CK_GCM_MESSAGE_PARAMS* p)
 {
-	if (p->ivGenerator == CKG_NO_GENERATE) {
+	switch (p->ivGenerator)
+	{
+	case CKG_NO_GENERATE:
 		// Caller provides IV — validate it is present.
 		if (p->pIv == NULL_PTR || p->ulIvLen == 0)
 			return CKR_ARGUMENTS_BAD;
 		return CKR_OK;
+
+	case CKG_GENERATE:
+	case CKG_GENERATE_RANDOM:
+	case CKG_GENERATE_COUNTER:
+	case CKG_GENERATE_COUNTER_XOR:
+		// For all generate variants, fill with random bytes.
+		// Counter-mode IV generation (fixed prefix + incrementing counter) can be
+		// layered on top by the application; softhsmv3 generates a fresh random IV
+		// unconditionally for any of the three "generate" variants.
+		break;
+
+	default:
+		return CKR_MECHANISM_PARAM_INVALID;
 	}
 
-	// For all generate variants (random, counter, counter-XOR), fill with random bytes.
-	// Counter-mode IV generation (fixed prefix + incrementing counter) can be layered
-	// on top by the application; softhsmv3 generates a fresh random IV unconditionally.
 	if (p->pIv == NULL_PTR || p->ulIvLen == 0)
 		return CKR_ARGUMENTS_BAD;
 
