@@ -101,12 +101,14 @@ The table below lists functions that have changed status relative to SoftHSMv2:
 | `C_DecryptMessageBegin`    | **Implemented**| Opens streaming AES-GCM decrypt; stores per-message IV     |
 | `C_DecryptMessageNext`     | **Implemented**| Streams ciphertext parts; `CKF_END_OF_MESSAGE` finalises   |
 | `C_MessageDecryptFinal`    | **Implemented**| Ends multi-message decrypt session; frees key context      |
-| `C_VerifySignatureInit`    | Stub           | Planned G4                                                 |
-| `C_VerifySignature`        | Stub           | Planned G4                                                 |
-| `C_WrapKeyAuthenticated`   | Stub           | Planned G5                                                 |
-| `C_UnwrapKeyAuthenticated` | Stub           | Planned G5                                                 |
-| `C_LoginUser`              | Stub           | Planned G6                                                 |
-| `C_SessionCancel`          | Stub           | Planned G6                                                 |
+| `C_VerifySignatureInit`    | **Implemented**| Pre-bind signature at init; SESSION_OP_VERIFY_SIGNATURE    |
+| `C_VerifySignature`        | **Implemented**| Single-part verify against pre-bound signature             |
+| `C_VerifySignatureUpdate`  | **Implemented**| Multi-part data accumulation (multi-part mechs only)       |
+| `C_VerifySignatureFinal`   | **Implemented**| Multi-part finalise against pre-bound signature            |
+| `C_WrapKeyAuthenticated`   | **Implemented**| AES-GCM key wrap with AAD; output = ciphertext ‖ tag       |
+| `C_UnwrapKeyAuthenticated` | **Implemented**| AES-GCM key unwrap with AAD auth-tag verification          |
+| `C_LoginUser`              | **Implemented**| Delegates to C_Login; username ignored (single-user model) |
+| `C_SessionCancel`          | **Implemented**| Resets active session operation via resetOp()              |
 | `C_SignRecover` / `C_VerifyRecover` | `CKR_FUNCTION_NOT_SUPPORTED` | Not planned        |
 | `C_DigestKey`              | `CKR_FUNCTION_NOT_SUPPORTED` | Not planned                      |
 
@@ -540,18 +542,18 @@ softhsmv3 returns standard `CKR_*` codes. The behaviours below differ from gener
 
 | Scenario                                           | CKR code returned                      |
 |----------------------------------------------------|----------------------------------------|
-| Call ML-DSA `C_SignUpdate` after `C_SignInit`       | `CKR_OPERATION_NOT_INITIALIZED`        |
-| Call `C_SignMessage` when session is in SIGN_BEGIN state | `CKR_OPERATION_NOT_INITIALIZED`   |
-| Pass `pData == NULL` to `C_SignMessage` or `C_SignMessageNext` | `CKR_ARGUMENTS_BAD`         |
-| Pass `pulSignatureLen == NULL` to `C_SignMessageNext` | `CKR_ARGUMENTS_BAD`                 |
-| Encrypt/decrypt message call in wrong op-type state | `CKR_OPERATION_NOT_INITIALIZED`        |
-| AES-GCM param with NULL IV pointer                  | `CKR_ARGUMENTS_BAD`                    |
-| AES-GCM auth-tag verification failure               | `CKR_FUNCTION_FAILED`                  |
-| Call stub functions (G4–G6)                         | `CKR_FUNCTION_NOT_SUPPORTED`           |
-| Call `C_SignRecover` / `C_DigestKey`                | `CKR_FUNCTION_NOT_SUPPORTED`           |
-| OpenSSL EVP operation failure                       | `CKR_FUNCTION_FAILED`                  |
-| `session->setParameters` heap allocation fails      | `CKR_HOST_MEMORY`                      |
-| Wrong session op-type for the called function       | `CKR_OPERATION_NOT_INITIALIZED`        |
+| Call ML-DSA `C_SignUpdate` after `C_SignInit`      | `CKR_OPERATION_NOT_INITIALIZED`        |
+| `C_SignMessage` in MESSAGE_SIGN_BEGIN state        | `CKR_OPERATION_NOT_INITIALIZED`        |
+| `pData == NULL` in `C_SignMessage` / Next          | `CKR_ARGUMENTS_BAD`                    |
+| `pulSignatureLen == NULL` to `C_SignMessageNext`   | `CKR_ARGUMENTS_BAD`                    |
+| Encrypt/decrypt message in wrong op-type state     | `CKR_OPERATION_NOT_INITIALIZED`        |
+| AES-GCM param with NULL IV pointer                 | `CKR_ARGUMENTS_BAD`                    |
+| AES-GCM auth-tag verification failure              | `CKR_FUNCTION_FAILED`                  |
+| Call `C_GetOperationState` / `C_SetOperationState` | `CKR_FUNCTION_NOT_SUPPORTED`           |
+| Call `C_SignRecover` / `C_DigestKey`               | `CKR_FUNCTION_NOT_SUPPORTED`           |
+| OpenSSL EVP operation failure                      | `CKR_FUNCTION_FAILED`                  |
+| `session->setParameters` heap allocation fails     | `CKR_HOST_MEMORY`                      |
+| Wrong session op-type for the called function      | `CKR_OPERATION_NOT_INITIALIZED`        |
 | Key attribute `CKA_SIGN` / `CKA_VERIFY` not set    | `CKR_KEY_FUNCTION_NOT_PERMITTED`       |
 
 ### Error path after a failed operation
