@@ -14,9 +14,11 @@ option(ENABLE_STRICT "Enable strict compile mode" ON)
 option(ENABLE_STATIC "Build static libraries" ON)
 option(WITH_OBJECTSTORE_BACKEND_DB "Build with object store backend database (SQLite3)" OFF)
 
-# ECC and EdDSA are always enabled — required for PQC roadmap
-set(WITH_ECC ON)
-set(WITH_EDDSA ON)
+# ECC and EdDSA are always enabled — required for PQC roadmap.
+# CompilerOptions.cmake tests ENABLE_ECC / ENABLE_EDDSA; WITH_ECC / WITH_EDDSA
+# are set by CompilerOptions after the feature tests pass.
+set(ENABLE_ECC ON)
+set(ENABLE_EDDSA ON)
 
 # ---- Version ----------------------------------------------------------------
 
@@ -73,21 +75,19 @@ message(STATUS "C++ Standard: C++${CMAKE_CXX_STANDARD}")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
                       ${CMAKE_SOURCE_DIR}/cmake/modules)
 
-# Require OpenSSL >= 3.5 for ML-DSA and ML-KEM EVP support
-find_package(OpenSSL 3.5 REQUIRED)
-
-if(OPENSSL_FOUND)
-    message(STATUS "OpenSSL: ${OPENSSL_VERSION} at ${OPENSSL_INCLUDE_DIR}")
-    set(CRYPTO_INCLUDES ${OPENSSL_INCLUDE_DIR})
-    set(CRYPTO_LIBS ${OPENSSL_LIBRARIES})
-    set(WITH_OPENSSL 1)
-else()
-    message(FATAL_ERROR "OpenSSL >= 3.5 is required")
-endif()
+# CompilerOptions.cmake drives crypto backend detection via WITH_CRYPTO_BACKEND.
+# Phase 1: EVP-only API; OpenSSL >= 3.3 required (Ubuntu 24.04 ships 3.3).
+# Phase 2 will re-raise to 3.5 when ML-DSA/ML-KEM EVP support is needed.
+set(WITH_CRYPTO_BACKEND "openssl")
 
 # ---- Compiler Options -------------------------------------------------------
 
 include(CompilerOptions)
+
+# Enforce minimum OpenSSL version after CompilerOptions resolved the library.
+if(OPENSSL_VERSION VERSION_LESS "3.3")
+    message(FATAL_ERROR "OpenSSL >= 3.3 is required (found ${OPENSSL_VERSION})")
+endif()
 include(GenerateExportHeader)
 
 # ---- Object Store -----------------------------------------------------------

@@ -27,7 +27,7 @@
 /*****************************************************************************
  OSSLECPrivateKey.h
 
- OpenSSL Elliptic Curve private key class
+ OpenSSL Elliptic Curve private key class — EVP_PKEY throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #ifndef _SOFTHSM_V2_OSSLECPRIVATEKEY_H
@@ -35,8 +35,7 @@
 
 #include "config.h"
 #include "ECPrivateKey.h"
-#include <openssl/bn.h>
-#include <openssl/ec.h>
+#include <openssl/evp.h>
 
 class OSSLECPrivateKey : public ECPrivateKey
 {
@@ -44,7 +43,7 @@ public:
 	// Constructors
 	OSSLECPrivateKey();
 
-	OSSLECPrivateKey(const EC_KEY* inECKEY);
+	OSSLECPrivateKey(const EVP_PKEY* inPKEY);
 
 	// Destructor
 	virtual ~OSSLECPrivateKey();
@@ -70,16 +69,15 @@ public:
 	// Decode from PKCS#8 BER
 	virtual bool PKCS8Decode(const ByteString& ber);
 
-	// Set from OpenSSL representation
-	virtual void setFromOSSL(const EC_KEY* inECKEY);
+	// Set from OpenSSL EVP_PKEY representation
+	virtual void setFromOSSL(const EVP_PKEY* inPKEY);
 
-	// Retrieve the OpenSSL representation of the key
-	EC_KEY* getOSSLKey();
+	// Retrieve the OpenSSL EVP_PKEY representation of the key (built lazily)
+	EVP_PKEY* getOSSLKey();
 
 private:
-	// The internal OpenSSL representation
-	EC_KEY* eckey;
+	// The internal OpenSSL representation (built lazily from ec, d)
+	EVP_PKEY* pkey;
 };
 
 #endif // !_SOFTHSM_V2_OSSLECPRIVATEKEY_H
-

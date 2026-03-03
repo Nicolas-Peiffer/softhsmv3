@@ -27,7 +27,7 @@
 /*****************************************************************************
  OSSLECPrivateKey.cpp
 
- OpenSSL EC private key class
+ OpenSSL EC private key class — EVP_PKEY throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #include "config.h"
@@ -36,73 +36,34 @@
 #include "OSSLECPrivateKey.h"
 #include "OSSLUtil.h"
 #include <openssl/bn.h>
+#include <openssl/core_names.h>
+#include <openssl/err.h>
+#include <openssl/objects.h>
+#include <openssl/param_build.h>
 #include <openssl/x509.h>
+#include <string.h>
 
 // Constructors
 OSSLECPrivateKey::OSSLECPrivateKey()
 {
-	eckey = EC_KEY_new();
-
-	// For PKCS#8 encoding
-	EC_KEY_set_enc_flags(eckey, EC_PKEY_NO_PUBKEY);
+	pkey = NULL;
 }
 
-OSSLECPrivateKey::OSSLECPrivateKey(const EC_KEY* inECKEY)
+OSSLECPrivateKey::OSSLECPrivateKey(const EVP_PKEY* inPKEY)
 {
-	eckey = EC_KEY_new();
+	pkey = NULL;
 
-	// For PKCS#8 encoding
-	EC_KEY_set_enc_flags(eckey, EC_PKEY_NO_PUBKEY);
-
-	setFromOSSL(inECKEY);
+	setFromOSSL(inPKEY);
 }
 
 // Destructor
 OSSLECPrivateKey::~OSSLECPrivateKey()
 {
-	EC_KEY_free(eckey);
+	EVP_PKEY_free(pkey);
 }
 
 // The type
 /*static*/ const char* OSSLECPrivateKey::type = "OpenSSL EC Private Key";
-
-// Get the base point order length
-unsigned long OSSLECPrivateKey::getOrderLength() const
-{
-	const EC_GROUP* grp = EC_KEY_get0_group(eckey);
-	if (grp != NULL)
-	{
-		BIGNUM* order = BN_new();
-		if (order == NULL)
-			return 0;
-		if (!EC_GROUP_get_order(grp, order, NULL))
-		{
-			BN_clear_free(order);
-			return 0;
-		}
-		unsigned long len = BN_num_bytes(order);
-		BN_clear_free(order);
-		return len;
-	}
-	return 0;
-}
-
-// Set from OpenSSL representation
-void OSSLECPrivateKey::setFromOSSL(const EC_KEY* inECKEY)
-{
-	const EC_GROUP* grp = EC_KEY_get0_group(inECKEY);
-	if (grp != NULL)
-	{
-		ByteString inEC = OSSL::grp2ByteString(grp);
-		setEC(inEC);
-	}
-	const BIGNUM* pk = EC_KEY_get0_private_key(inECKEY);
-	if (pk != NULL)
-	{
-		ByteString inD = OSSL::bn2ByteString(pk);
-		setD(inD);
-	}
-}
 
 // Check if the key is of the given type
 bool OSSLECPrivateKey::isOfType(const char* inType)
@@ -110,42 +71,163 @@ bool OSSLECPrivateKey::isOfType(const char* inType)
 	return !strcmp(type, inType);
 }
 
+// Get the base point order length
+unsigned long OSSLECPrivateKey::getOrderLength() const
+{
+	if (ec.size() == 0)
+		return 0;
+
+	EC_GROUP* grp = OSSL::byteString2grp(ec);
+	if (grp == NULL)
+		return 0;
+
+	BIGNUM* order = BN_new();
+	if (order == NULL)
+	{
+		EC_GROUP_free(grp);
+		return 0;
+	}
+	if (!EC_GROUP_get_order(grp, order, NULL))
+	{
+		BN_clear_free(order);
+		EC_GROUP_free(grp);
+		return 0;
+	}
+	unsigned long len = BN_num_bytes(order);
+	BN_clear_free(order);
+	EC_GROUP_free(grp);
+	return len;
+}
+
+// Set from OpenSSL EVP_PKEY representation
+void OSSLECPrivateKey::setFromOSSL(const EVP_PKEY* inPKEY)
+{
+	// Extract group name and build DER-encoded ECParameters
+	char curve_name[80] = {};
+	if (EVP_PKEY_get_utf8_string_param(inPKEY, OSSL_PKEY_PARAM_GROUP_NAME,
+	                                   curve_name, sizeof(curve_name), NULL))
+	{
+		int nid = OBJ_sn2nid(curve_name);
+		if (nid == NID_undef) nid = OBJ_ln2nid(curve_name);
+		if (nid != NID_undef)
+		{
+			EC_GROUP* grp = EC_GROUP_new_by_curve_name(nid);
+			if (grp)
+			{
+				ByteString inEC = OSSL::grp2ByteString(grp);
+				setEC(inEC);
+				EC_GROUP_free(grp);
+			}
+		}
+	}
+
+	// Extract private key scalar
+	BIGNUM* bn_d = NULL;
+	if (EVP_PKEY_get_bn_param(inPKEY, OSSL_PKEY_PARAM_PRIV_KEY, &bn_d) && bn_d)
+	{
+		ByteString inD = OSSL::bn2ByteString(bn_d);
+		setD(inD);
+		BN_clear_free(bn_d);
+	}
+}
+
 // Setters for the EC private key components
 void OSSLECPrivateKey::setD(const ByteString& inD)
 {
 	ECPrivateKey::setD(inD);
 
-	BIGNUM* pk = OSSL::byteString2bn(inD);
-	EC_KEY_set_private_key(eckey, pk);
-	BN_clear_free(pk);
+	if (pkey) { EVP_PKEY_free(pkey); pkey = NULL; }
 }
-
 
 // Setters for the EC public key components
 void OSSLECPrivateKey::setEC(const ByteString& inEC)
 {
 	ECPrivateKey::setEC(inEC);
 
-	EC_GROUP* grp = OSSL::byteString2grp(inEC);
-	EC_KEY_set_group(eckey, grp);
+	if (pkey) { EVP_PKEY_free(pkey); pkey = NULL; }
+}
+
+// Retrieve the OpenSSL EVP_PKEY representation of the key (built lazily)
+EVP_PKEY* OSSLECPrivateKey::getOSSLKey()
+{
+	if (pkey != NULL)
+		return pkey;
+
+	if (ec.size() == 0 || d.size() == 0)
+		return NULL;
+
+	// Decode DER-encoded ECParameters → EC_GROUP → curve short name
+	EC_GROUP* grp = OSSL::byteString2grp(ec);
+	if (grp == NULL)
+		return NULL;
+
+	int nid = EC_GROUP_get_curve_name(grp);
+	const char* curve_name = OBJ_nid2sn(nid);
 	EC_GROUP_free(grp);
+
+	if (curve_name == NULL)
+		return NULL;
+
+	BIGNUM* bn_d = OSSL::byteString2bn(d);
+	if (bn_d == NULL)
+		return NULL;
+
+	OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+	if (bld == NULL)
+	{
+		BN_clear_free(bn_d);
+		return NULL;
+	}
+
+	if (!OSSL_PARAM_BLD_push_utf8_string(bld, OSSL_PKEY_PARAM_GROUP_NAME,
+	                                      curve_name, strlen(curve_name)) ||
+	    !OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, bn_d))
+	{
+		OSSL_PARAM_BLD_free(bld);
+		BN_clear_free(bn_d);
+		return NULL;
+	}
+
+	BN_clear_free(bn_d);
+
+	OSSL_PARAM* params = OSSL_PARAM_BLD_to_param(bld);
+	OSSL_PARAM_BLD_free(bld);
+
+	if (params == NULL)
+		return NULL;
+
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+	if (ctx == NULL)
+	{
+		OSSL_PARAM_free(params);
+		return NULL;
+	}
+
+	// EVP_PKEY_KEYPAIR: OpenSSL will compute the public point from the private scalar
+	if (EVP_PKEY_fromdata_init(ctx) <= 0 ||
+	    EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEYPAIR, params) <= 0)
+	{
+		ERROR_MSG("Could not build EVP_PKEY for EC private key (0x%08X)", ERR_get_error());
+		EVP_PKEY_free(pkey);
+		pkey = NULL;
+	}
+
+	EVP_PKEY_CTX_free(ctx);
+	OSSL_PARAM_free(params);
+
+	return pkey;
 }
 
 // Encode into PKCS#8 DER
 ByteString OSSLECPrivateKey::PKCS8Encode()
 {
 	ByteString der;
-	if (eckey == NULL) return der;
-	EVP_PKEY* pkey = EVP_PKEY_new();
-	if (pkey == NULL) return der;
-	if (!EVP_PKEY_set1_EC_KEY(pkey, eckey))
-	{
-		EVP_PKEY_free(pkey);
-		return der;
-	}
-	PKCS8_PRIV_KEY_INFO* p8inf = EVP_PKEY2PKCS8(pkey);
-	EVP_PKEY_free(pkey);
+	EVP_PKEY* key = getOSSLKey();
+	if (key == NULL) return der;
+
+	PKCS8_PRIV_KEY_INFO* p8inf = EVP_PKEY2PKCS8(key);
 	if (p8inf == NULL) return der;
+
 	int len = i2d_PKCS8_PRIV_KEY_INFO(p8inf, NULL);
 	if (len < 0)
 	{
@@ -168,20 +250,11 @@ bool OSSLECPrivateKey::PKCS8Decode(const ByteString& ber)
 	const unsigned char* priv = ber.const_byte_str();
 	PKCS8_PRIV_KEY_INFO* p8 = d2i_PKCS8_PRIV_KEY_INFO(NULL, &priv, len);
 	if (p8 == NULL) return false;
-	EVP_PKEY* pkey = EVP_PKCS82PKEY(p8);
+	EVP_PKEY* key = EVP_PKCS82PKEY(p8);
 	PKCS8_PRIV_KEY_INFO_free(p8);
-	if (pkey == NULL) return false;
-	EC_KEY* key = EVP_PKEY_get1_EC_KEY(pkey);
-	EVP_PKEY_free(pkey);
 	if (key == NULL) return false;
 	setFromOSSL(key);
-	EC_KEY_free(key);
+	EVP_PKEY_free(key);
 	return true;
-}
-
-// Retrieve the OpenSSL representation of the key
-EC_KEY* OSSLECPrivateKey::getOSSLKey()
-{
-	return eckey;
 }
 #endif

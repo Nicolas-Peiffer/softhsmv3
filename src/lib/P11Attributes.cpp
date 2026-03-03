@@ -34,7 +34,6 @@
 #include "P11Attributes.h"
 #include "ByteString.h"
 #include "CryptoFactory.h"
-#include "DESKey.h"
 #include "AESKey.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -863,7 +862,6 @@ CK_RV P11AttrCheckValue::updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pV
 
 		SymmetricKey key;
 		AESKey aes;
-		DESKey des;
 		switch (osobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED))
 		{
 			case CKK_GENERIC_SECRET:
@@ -881,18 +879,6 @@ CK_RV P11AttrCheckValue::updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pV
 				aes.setKeyBits(keybits);
 				aes.setBitLen(keybits.size() * 8);
 				checkValue = aes.getKeyCheckValue();
-				break;
-			case CKK_DES:
-			case CKK_DES2:
-			case CKK_DES3:
-				des.setKeyBits(keybits);
-				des.setBitLen(keybits.size() * 7);
-				checkValue = des.getKeyCheckValue();
-				break;
-			case CKK_GOST28147:
-				// TODO: Encryption support for CKK_GOST28147
-				// We do not calculate the KCV
-				checkValue = plaintext;
 				break;
 			default:
 				return CKR_GENERAL_ERROR;
@@ -1020,7 +1006,6 @@ CK_RV P11AttrValue::updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue,
 	{
 		SymmetricKey key;
 		AESKey aes;
-		DESKey des;
 		ByteString checkValue;
 		switch (osobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED))
 		{
@@ -1039,17 +1024,6 @@ CK_RV P11AttrValue::updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue,
 				aes.setKeyBits(plaintext);
 				aes.setBitLen(plaintext.size() * 8);
 				checkValue = aes.getKeyCheckValue();
-				break;
-			case CKK_DES:
-			case CKK_DES2:
-			case CKK_DES3:
-				des.setKeyBits(plaintext);
-				des.setBitLen(plaintext.size() * 7);
-				checkValue = des.getKeyCheckValue();
-				break;
-			case CKK_GOST28147:
-				// TODO: Encryption support for CKK_GOST28147
-				// We do not calculate the KCV
 				break;
 			default:
 				return CKR_GENERAL_ERROR;

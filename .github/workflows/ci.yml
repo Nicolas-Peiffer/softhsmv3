@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Test (Ubuntu 24.04 / OpenSSL 3.3)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            cmake g++ pkg-config \
+            libssl-dev \
+            libcppunit-dev
+
+      - name: Verify OpenSSL version
+        run: openssl version
+
+      - name: CMake configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Test
+        run: cd build && ctest --output-on-failure
+
+      - name: Check for deprecated OpenSSL API usage
+        run: |
+          echo "=== Scanning for removed/deprecated OpenSSL 1.x APIs ==="
+          DEPRECATED=(
+            "RSA_private_encrypt"
+            "RSA_public_decrypt"
+            "RSA_blinding_on"
+            "RSA_blinding_off"
+            "RSA_generate_key_ex"
+            "ECDSA_do_sign"
+            "ECDSA_do_verify"
+            "ECDH_compute_key"
+            "EC_KEY_new"
+            "EC_KEY_free"
+            "EC_KEY_set_group"
+            "EC_KEY_get0_public_key"
+            "EVP_PKEY_set1_RSA"
+            "EVP_PKEY_set1_EC_KEY"
+            "EVP_PKEY_get1_RSA"
+            "EVP_PKEY_get1_EC_KEY"
+            "ENGINE_by_id"
+            "RSA_set_method"
+            "ECDSA_set_method"
+            "OpenSSL_add_all_algorithms"
+          )
+          FOUND=0
+          for sym in "${DEPRECATED[@]}"; do
+            hits=$(grep -rn "$sym" src/lib/crypto/ --include="*.cpp" --include="*.h" || true)
+            if [ -n "$hits" ]; then
+              echo "DEPRECATED API FOUND: $sym"
+              echo "$hits"
+              FOUND=1
+            fi
+          done
+          if [ "$FOUND" -eq 1 ]; then
+            echo "ERROR: Deprecated API usage detected. Fix before merging."
+            exit 1
+          else
+            echo "OK: No deprecated OpenSSL API usage found."
+          fi

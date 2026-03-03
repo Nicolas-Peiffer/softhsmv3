@@ -36,7 +36,7 @@
 #include "config.h"
 #include "AsymmetricAlgorithm.h"
 #include "HashAlgorithm.h"
-#include <openssl/rsa.h>
+#include <openssl/evp.h>
 
 class OSSLRSA : public AsymmetricAlgorithm
 {

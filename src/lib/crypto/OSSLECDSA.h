@@ -35,7 +35,7 @@
 
 #include "config.h"
 #include "AsymmetricAlgorithm.h"
-#include <openssl/ecdsa.h>
+#include <openssl/evp.h>
 
 class OSSLECDSA : public AsymmetricAlgorithm
 {

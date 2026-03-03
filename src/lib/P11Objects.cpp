@@ -35,6 +35,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// CKC_OPENPGP was in PKCS#11 2.x but removed from v3.2 headers; keep for
+// backward-compatible object storage only (no crypto operations).
+#ifndef CKC_OPENPGP
+#define CKC_OPENPGP 0x00000003UL
+#endif
+
 // Constructor
 P11Object::P11Object()
 {

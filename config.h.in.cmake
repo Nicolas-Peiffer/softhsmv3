@@ -134,10 +134,10 @@
 #cmakedefine VERSION "@VERSION@"
 
 /* SoftHSM major version number via PKCS#11 */
-#cmakedefine VERSION_MAJOR @VERSION_MAJOR@
+#define VERSION_MAJOR @VERSION_MAJOR@
 
 /* SoftHSM minor version number via PKCS#11 */
-#cmakedefine VERSION_MINOR @VERSION_MINOR@
+#define VERSION_MINOR @VERSION_MINOR@
 
 /* Compile with AES GCM */
 #cmakedefine WITH_AES_GCM @WITH_AES_GCM@

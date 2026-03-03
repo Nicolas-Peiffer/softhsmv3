@@ -27,7 +27,7 @@
 /*****************************************************************************
  OSSLRSA.cpp
 
- OpenSSL RSA asymmetric algorithm implementation
+ OpenSSL RSA asymmetric algorithm implementation — EVP_PKEY_CTX throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #include "config.h"
@@ -38,9 +38,11 @@
 #include "RSAParameters.h"
 #include "OSSLRSAKeyPair.h"
 #include <algorithm>
-#include <openssl/rsa.h>
-#include <openssl/pem.h>
+#include <openssl/core_names.h>
 #include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/param_build.h>
+#include <openssl/rsa.h>
 
 // Constructor
 OSSLRSA::OSSLRSA()
@@ -71,114 +73,81 @@ bool OSSLRSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 {
 	if (mechanism == AsymMech::RSA_PKCS)
 	{
-		// Separate implementation for RSA PKCS #1 signing without hash computation
-
-		// Check if the private key is the right type
+		// Raw PKCS #1 v1.5 sign — caller provides DigestInfo-wrapped data
 		if (!privateKey->isOfType(OSSLRSAPrivateKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
-		// In case of PKCS #1 signing the length of the input data may not exceed 40% of the
-		// modulus size
 		OSSLRSAPrivateKey* osslKey = (OSSLRSAPrivateKey*) privateKey;
-
 		size_t allowedLen = osslKey->getN().size() - 11;
 
 		if (dataToSign.size() > allowedLen)
 		{
 			ERROR_MSG("Data to sign exceeds maximum for PKCS #1 signature");
-
 			return false;
 		}
 
-		// Perform the signature operation
-		signature.resize(osslKey->getN().size());
-
-		RSA* rsa = osslKey->getOSSLKey();
-
-		if (!RSA_blinding_on(rsa, NULL))
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
 		{
-			ERROR_MSG("Failed to turn on blinding for OpenSSL RSA key");
-
+			ERROR_MSG("Could not get the OpenSSL private key");
 			return false;
 		}
 
-		int sigLen = RSA_private_encrypt(dataToSign.size(), (unsigned char*) dataToSign.const_byte_str(), &signature[0], rsa, RSA_PKCS1_PADDING);
-
-		RSA_blinding_off(rsa);
-
-		if (sigLen == -1)
-		{
-			ERROR_MSG("An error occurred while performing a PKCS #1 signature");
-
-			return false;
-		}
-
+		size_t sigLen = osslKey->getN().size();
 		signature.resize(sigLen);
 
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (ctx == NULL ||
+		    EVP_PKEY_sign_init(ctx) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0 ||
+		    EVP_PKEY_sign(ctx, &signature[0], &sigLen,
+		                  dataToSign.const_byte_str(), dataToSign.size()) <= 0)
+		{
+			ERROR_MSG("PKCS #1 sign failed (0x%08X)", ERR_get_error());
+			EVP_PKEY_CTX_free(ctx);
+			return false;
+		}
+		EVP_PKEY_CTX_free(ctx);
+		signature.resize(sigLen);
 		return true;
 	}
 	else if (mechanism == AsymMech::RSA_PKCS_PSS)
 	{
-		const RSA_PKCS_PSS_PARAMS *pssParam = (RSA_PKCS_PSS_PARAMS*)param;
+		const RSA_PKCS_PSS_PARAMS* pssParam = (RSA_PKCS_PSS_PARAMS*) param;
 
-		// Separate implementation for RSA PKCS #1 signing without hash computation
-
-		// Check if the private key is the right type
 		if (!privateKey->isOfType(OSSLRSAPrivateKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
 		if (pssParam == NULL || paramLen != sizeof(RSA_PKCS_PSS_PARAMS))
 		{
 			ERROR_MSG("Invalid parameters supplied");
-
 			return false;
 		}
 
-		size_t allowedLen;
 		const EVP_MD* hash = NULL;
+		size_t allowedLen;
 
 		switch (pssParam->hashAlg)
 		{
-		case HashAlgo::SHA1:
-			hash = EVP_sha1();
-			allowedLen = 20;
-			break;
-		case HashAlgo::SHA224:
-			hash = EVP_sha224();
-			allowedLen = 28;
-			break;
-		case HashAlgo::SHA256:
-			hash = EVP_sha256();
-			allowedLen = 32;
-			break;
-		case HashAlgo::SHA384:
-			hash = EVP_sha384();
-			allowedLen = 48;
-			break;
-		case HashAlgo::SHA512:
-			hash = EVP_sha512();
-			allowedLen = 64;
-			break;
-		default:
-			return false;
+		case HashAlgo::SHA1:   hash = EVP_sha1();   allowedLen = 20; break;
+		case HashAlgo::SHA224: hash = EVP_sha224(); allowedLen = 28; break;
+		case HashAlgo::SHA256: hash = EVP_sha256(); allowedLen = 32; break;
+		case HashAlgo::SHA384: hash = EVP_sha384(); allowedLen = 48; break;
+		case HashAlgo::SHA512: hash = EVP_sha512(); allowedLen = 64; break;
+		default: return false;
 		}
 
 		OSSLRSAPrivateKey* osslKey = (OSSLRSAPrivateKey*) privateKey;
 
-		RSA* rsa = osslKey->getOSSLKey();
-
 		if (dataToSign.size() != allowedLen)
 		{
 			ERROR_MSG("Data to sign does not match expected (%d) for RSA PSS", (int)allowedLen);
-
 			return false;
 		}
 
@@ -190,95 +159,79 @@ bool OSSLRSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 			return false;
 		}
 
-		ByteString em;
-		em.resize(osslKey->getN().size());
-
-		int status = RSA_padding_add_PKCS1_PSS_mgf1(rsa, &em[0], (unsigned char*) dataToSign.const_byte_str(), hash, hash, pssParam->sLen);
-		if (!status)
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
 		{
-			ERROR_MSG("Error in RSA PSS padding generation");
-
+			ERROR_MSG("Could not get the OpenSSL private key");
 			return false;
 		}
 
-
-		if (!RSA_blinding_on(rsa, NULL))
-		{
-			ERROR_MSG("Failed to turn on blinding for OpenSSL RSA key");
-
-			return false;
-		}
-
-		// Perform the signature operation
-		signature.resize(osslKey->getN().size());
-
-		int sigLen = RSA_private_encrypt(osslKey->getN().size(), &em[0], &signature[0], rsa, RSA_NO_PADDING);
-
-		RSA_blinding_off(rsa);
-
-		if (sigLen == -1)
-		{
-			ERROR_MSG("An error occurred while performing the RSA-PSS signature");
-
-			return false;
-		}
-
+		size_t sigLen = osslKey->getN().size();
 		signature.resize(sigLen);
 
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (ctx == NULL ||
+		    EVP_PKEY_sign_init(ctx) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PSS_PADDING) <= 0 ||
+		    EVP_PKEY_CTX_set_signature_md(ctx, hash) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, (int)pssParam->sLen) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, hash) <= 0 ||
+		    EVP_PKEY_sign(ctx, &signature[0], &sigLen,
+		                  dataToSign.const_byte_str(), dataToSign.size()) <= 0)
+		{
+			ERROR_MSG("RSA PSS sign failed (0x%08X)", ERR_get_error());
+			EVP_PKEY_CTX_free(ctx);
+			return false;
+		}
+		EVP_PKEY_CTX_free(ctx);
+		signature.resize(sigLen);
 		return true;
 	}
 	else if (mechanism == AsymMech::RSA)
 	{
-		// Separate implementation for raw RSA signing
-
-		// Check if the private key is the right type
+		// Raw RSA — caller provides full modulus-size input
 		if (!privateKey->isOfType(OSSLRSAPrivateKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
-		// In case of raw RSA, the length of the input data must match the length of the modulus
 		OSSLRSAPrivateKey* osslKey = (OSSLRSAPrivateKey*) privateKey;
 
 		if (dataToSign.size() != osslKey->getN().size())
 		{
 			ERROR_MSG("Size of data to sign does not match the modulus size");
-
 			return false;
 		}
 
-		// Perform the signature operation
-		signature.resize(osslKey->getN().size());
-
-		RSA* rsa = osslKey->getOSSLKey();
-
-		if (!RSA_blinding_on(rsa, NULL))
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
 		{
-			ERROR_MSG("Failed to turn on blinding for OpenSSL RSA key");
-
+			ERROR_MSG("Could not get the OpenSSL private key");
 			return false;
 		}
 
-		int sigLen = RSA_private_encrypt(dataToSign.size(), (unsigned char*) dataToSign.const_byte_str(), &signature[0], rsa, RSA_NO_PADDING);
-
-		RSA_blinding_off(rsa);
-
-		if (sigLen == -1)
-		{
-			ERROR_MSG("An error occurred while performing a raw RSA signature");
-
-			return false;
-		}
-
+		size_t sigLen = osslKey->getN().size();
 		signature.resize(sigLen);
 
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (ctx == NULL ||
+		    EVP_PKEY_sign_init(ctx) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_NO_PADDING) <= 0 ||
+		    EVP_PKEY_sign(ctx, &signature[0], &sigLen,
+		                  dataToSign.const_byte_str(), dataToSign.size()) <= 0)
+		{
+			ERROR_MSG("Raw RSA sign failed (0x%08X)", ERR_get_error());
+			EVP_PKEY_CTX_free(ctx);
+			return false;
+		}
+		EVP_PKEY_CTX_free(ctx);
+		signature.resize(sigLen);
 		return true;
 	}
 	else
 	{
-		// Call default implementation
+		// Call default implementation (hashing multi-step path)
 		return AsymmetricAlgorithm::sign(privateKey, dataToSign, signature, mechanism, param, paramLen);
 	}
 }
@@ -541,7 +494,6 @@ bool OSSLRSA::signFinal(ByteString& signature)
 	if (pSecondHash != NULL)
 	{
 		delete pSecondHash;
-
 		pSecondHash = NULL;
 	}
 
@@ -555,118 +507,68 @@ bool OSSLRSA::signFinal(ByteString& signature)
 	// Resize the data block for the signature to the modulus size of the key
 	signature.resize(pk->getN().size());
 
-	// Determine the signature NID type
-	int type = 0;
+	// Determine the EVP_MD and whether PSS is needed
 	bool isPSS = false;
 	const EVP_MD* hash = NULL;
+	int nid = NID_undef;
 
 	switch (mechanism)
 	{
-		case AsymMech::RSA_MD5_PKCS:
-			type = NID_md5;
-			break;
-		case AsymMech::RSA_SHA1_PKCS:
-			type = NID_sha1;
-			break;
-		case AsymMech::RSA_SHA224_PKCS:
-			type = NID_sha224;
-			break;
-		case AsymMech::RSA_SHA256_PKCS:
-			type = NID_sha256;
-			break;
-		case AsymMech::RSA_SHA384_PKCS:
-			type = NID_sha384;
-			break;
-		case AsymMech::RSA_SHA512_PKCS:
-			type = NID_sha512;
-			break;
-		case AsymMech::RSA_SHA1_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha1();
-			break;
-		case AsymMech::RSA_SHA224_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha224();
-			break;
-		case AsymMech::RSA_SHA256_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha256();
-			break;
-		case AsymMech::RSA_SHA384_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha384();
-			break;
-		case AsymMech::RSA_SHA512_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha512();
-			break;
-		case AsymMech::RSA_SSL:
-			type = NID_md5_sha1;
-			break;
-		default:
-			break;
+		case AsymMech::RSA_MD5_PKCS:    nid = NID_md5;    break;
+		case AsymMech::RSA_SHA1_PKCS:   nid = NID_sha1;   break;
+		case AsymMech::RSA_SHA224_PKCS: nid = NID_sha224; break;
+		case AsymMech::RSA_SHA256_PKCS: nid = NID_sha256; break;
+		case AsymMech::RSA_SHA384_PKCS: nid = NID_sha384; break;
+		case AsymMech::RSA_SHA512_PKCS: nid = NID_sha512; break;
+		case AsymMech::RSA_SHA1_PKCS_PSS:   isPSS = true; hash = EVP_sha1();   break;
+		case AsymMech::RSA_SHA224_PKCS_PSS: isPSS = true; hash = EVP_sha224(); break;
+		case AsymMech::RSA_SHA256_PKCS_PSS: isPSS = true; hash = EVP_sha256(); break;
+		case AsymMech::RSA_SHA384_PKCS_PSS: isPSS = true; hash = EVP_sha384(); break;
+		case AsymMech::RSA_SHA512_PKCS_PSS: isPSS = true; hash = EVP_sha512(); break;
+		case AsymMech::RSA_SSL:         nid = NID_md5_sha1; break;
+		default: break;
 	}
 
-	// Perform the signature operation
-	unsigned int sigLen = signature.size();
-
-	RSA* rsa = pk->getOSSLKey();
-
-	if (!RSA_blinding_on(rsa, NULL))
+	EVP_PKEY* pkey = pk->getOSSLKey();
+	if (pkey == NULL)
 	{
-		ERROR_MSG("Failed to turn blinding on for OpenSSL RSA key");
-
+		ERROR_MSG("Could not get the OpenSSL private key");
 		return false;
 	}
 
-	bool rv;
-	int result;
+	size_t sigLen = signature.size();
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	bool rv = false;
+
+	if (ctx == NULL || EVP_PKEY_sign_init(ctx) <= 0)
+	{
+		ERROR_MSG("EVP_PKEY_sign_init failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
 
 	if (isPSS)
 	{
-		ByteString em;
-		em.resize(pk->getN().size());
-
-		result = (RSA_padding_add_PKCS1_PSS(pk->getOSSLKey(), &em[0], &digest[0],
-						hash, sLen) == 1);
-		if (!result)
-		{
-			ERROR_MSG("RSA PSS padding failed (0x%08X)", ERR_get_error());
-			rv = false;
-		}
-		else
-		{
-			result = RSA_private_encrypt(em.size(), &em[0], &signature[0],
-							 pk->getOSSLKey(), RSA_NO_PADDING);
-			if (result >= 0)
-			{
-				sigLen = result;
-				rv = true;
-			}
-			else
-			{
-				ERROR_MSG("RSA private encrypt failed (0x%08X)", ERR_get_error());
-				rv = false;
-			}
-		}
+		rv = (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PSS_PADDING) > 0 &&
+		      EVP_PKEY_CTX_set_signature_md(ctx, hash) > 0 &&
+		      EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, (int)sLen) > 0 &&
+		      EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, hash) > 0 &&
+		      EVP_PKEY_sign(ctx, &signature[0], &sigLen,
+		                    &digest[0], digest.size()) > 0);
 	}
 	else
 	{
-		result = RSA_sign(type, &digest[0], digest.size(), &signature[0],
-			       &sigLen, pk->getOSSLKey());
-		if (result > 0)
-		{
-			rv = true;
-		}
-		else
-		{
-			ERROR_MSG("RSA sign failed (0x%08X)", ERR_get_error());
-			rv = false;
-		}
+		const EVP_MD* md = EVP_get_digestbynid(nid);
+		rv = (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) > 0 &&
+		      (md == NULL || EVP_PKEY_CTX_set_signature_md(ctx, md) > 0) &&
+		      EVP_PKEY_sign(ctx, &signature[0], &sigLen,
+		                    &digest[0], digest.size()) > 0);
 	}
 
-	RSA_blinding_off(rsa);
+	if (!rv)
+		ERROR_MSG("RSA sign failed (0x%08X)", ERR_get_error());
 
+	EVP_PKEY_CTX_free(ctx);
 	signature.resize(sigLen);
 
 	return rv;
@@ -679,111 +581,75 @@ bool OSSLRSA::verify(PublicKey* publicKey, const ByteString& originalData,
 {
 	if (mechanism == AsymMech::RSA_PKCS)
 	{
-		// Specific implementation for PKCS #1 only verification; originalData is assumed to contain
-		// a digestInfo structure and verification is performed by comparing originalData to the data
-		// recovered from the signature
-
-		// Check if the public key is the right type
+		// PKCS #1 v1.5 verification: recover DigestInfo and compare to originalData
 		if (!publicKey->isOfType(OSSLRSAPublicKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
-		// Perform the RSA public key operation
 		OSSLRSAPublicKey* osslKey = (OSSLRSAPublicKey*) publicKey;
-
-		ByteString recoveredData;
-
-		recoveredData.resize(osslKey->getN().size());
-
-		RSA* rsa = osslKey->getOSSLKey();
-
-		int retLen = RSA_public_decrypt(signature.size(), (unsigned char*) signature.const_byte_str(), &recoveredData[0], rsa, RSA_PKCS1_PADDING);
-
-		if (retLen == -1)
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
 		{
-			ERROR_MSG("Public key operation failed");
-
+			ERROR_MSG("Could not get the OpenSSL public key");
 			return false;
 		}
 
-		recoveredData.resize(retLen);
+		size_t nSize = osslKey->getN().size();
+		ByteString recovered;
+		recovered.resize(nSize);
+		size_t recoveredLen = nSize;
 
-		return (originalData == recoveredData);
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (ctx == NULL ||
+		    EVP_PKEY_verify_recover_init(ctx) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) <= 0 ||
+		    EVP_PKEY_verify_recover(ctx, &recovered[0], &recoveredLen,
+		                           signature.const_byte_str(), signature.size()) <= 0)
+		{
+			ERROR_MSG("RSA PKCS verify recover failed (0x%08X)", ERR_get_error());
+			EVP_PKEY_CTX_free(ctx);
+			return false;
+		}
+		EVP_PKEY_CTX_free(ctx);
+		recovered.resize(recoveredLen);
+
+		return (originalData == recovered);
 	}
 	else if (mechanism == AsymMech::RSA_PKCS_PSS)
 	{
-		const RSA_PKCS_PSS_PARAMS *pssParam = (RSA_PKCS_PSS_PARAMS*)param;
+		const RSA_PKCS_PSS_PARAMS* pssParam = (RSA_PKCS_PSS_PARAMS*) param;
 
 		if (pssParam == NULL || paramLen != sizeof(RSA_PKCS_PSS_PARAMS))
 		{
 			ERROR_MSG("Invalid parameters supplied");
-
 			return false;
 		}
 
-		// Check if the public key is the right type
 		if (!publicKey->isOfType(OSSLRSAPublicKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
-		// Perform the RSA public key operation
 		OSSLRSAPublicKey* osslKey = (OSSLRSAPublicKey*) publicKey;
 
-		ByteString recoveredData;
-
-		recoveredData.resize(osslKey->getN().size());
-
-		RSA* rsa = osslKey->getOSSLKey();
-
-		int retLen = RSA_public_decrypt(signature.size(), (unsigned char*) signature.const_byte_str(), &recoveredData[0], rsa, RSA_NO_PADDING);
-
-		if (retLen == -1)
-		{
-			ERROR_MSG("Public key operation failed");
-
-			return false;
-		}
-
-		recoveredData.resize(retLen);
-
-		size_t allowedLen;
 		const EVP_MD* hash = NULL;
+		size_t allowedLen;
 
 		switch (pssParam->hashAlg)
 		{
-		case HashAlgo::SHA1:
-			hash = EVP_sha1();
-			allowedLen = 20;
-			break;
-		case HashAlgo::SHA224:
-			hash = EVP_sha224();
-			allowedLen = 28;
-			break;
-		case HashAlgo::SHA256:
-			hash = EVP_sha256();
-			allowedLen = 32;
-			break;
-		case HashAlgo::SHA384:
-			hash = EVP_sha384();
-			allowedLen = 48;
-			break;
-		case HashAlgo::SHA512:
-			hash = EVP_sha512();
-			allowedLen = 64;
-			break;
-		default:
-			return false;
+		case HashAlgo::SHA1:   hash = EVP_sha1();   allowedLen = 20; break;
+		case HashAlgo::SHA224: hash = EVP_sha224(); allowedLen = 28; break;
+		case HashAlgo::SHA256: hash = EVP_sha256(); allowedLen = 32; break;
+		case HashAlgo::SHA384: hash = EVP_sha384(); allowedLen = 48; break;
+		case HashAlgo::SHA512: hash = EVP_sha512(); allowedLen = 64; break;
+		default: return false;
 		}
 
-		if (originalData.size() != allowedLen) {
+		if (originalData.size() != allowedLen)
 			return false;
-		}
 
 		size_t sParamLen = pssParam->sLen;
 		if (sParamLen > ((osslKey->getBitLength()+6)/8-2-allowedLen))
@@ -793,49 +659,66 @@ bool OSSLRSA::verify(PublicKey* publicKey, const ByteString& originalData,
 			return false;
 		}
 
-		int status = RSA_verify_PKCS1_PSS_mgf1(rsa, (unsigned char*)originalData.const_byte_str(), hash, hash, (unsigned char*) recoveredData.const_byte_str(), pssParam->sLen);
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
+		{
+			ERROR_MSG("Could not get the OpenSSL public key");
+			return false;
+		}
 
-		return (status == 1);
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		bool rv = (ctx != NULL &&
+		           EVP_PKEY_verify_init(ctx) > 0 &&
+		           EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PSS_PADDING) > 0 &&
+		           EVP_PKEY_CTX_set_signature_md(ctx, hash) > 0 &&
+		           EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, (int)pssParam->sLen) > 0 &&
+		           EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, hash) > 0 &&
+		           EVP_PKEY_verify(ctx, signature.const_byte_str(), signature.size(),
+		                           originalData.const_byte_str(), originalData.size()) == 1);
+		EVP_PKEY_CTX_free(ctx);
+		return rv;
 	}
 	else if (mechanism == AsymMech::RSA)
 	{
-		// Specific implementation for raw RSA verifiction; originalData is assumed to contain the
-		// full input data used to compute the signature and verification is performed by comparing
-		// originalData to the data recovered from the signature
-
-		// Check if the public key is the right type
+		// Raw RSA verification: recover the data and compare
 		if (!publicKey->isOfType(OSSLRSAPublicKey::type))
 		{
 			ERROR_MSG("Invalid key type supplied");
-
 			return false;
 		}
 
-		// Perform the RSA public key operation
 		OSSLRSAPublicKey* osslKey = (OSSLRSAPublicKey*) publicKey;
-
-		ByteString recoveredData;
-
-		recoveredData.resize(osslKey->getN().size());
-
-		RSA* rsa = osslKey->getOSSLKey();
-
-		int retLen = RSA_public_decrypt(signature.size(), (unsigned char*) signature.const_byte_str(), &recoveredData[0], rsa, RSA_NO_PADDING);
-
-		if (retLen == -1)
+		EVP_PKEY* pkey = osslKey->getOSSLKey();
+		if (pkey == NULL)
 		{
-			ERROR_MSG("Public key operation failed");
-
+			ERROR_MSG("Could not get the OpenSSL public key");
 			return false;
 		}
 
-		recoveredData.resize(retLen);
+		size_t nSize = osslKey->getN().size();
+		ByteString recovered;
+		recovered.resize(nSize);
+		size_t recoveredLen = nSize;
 
-		return (originalData == recoveredData);
+		EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+		if (ctx == NULL ||
+		    EVP_PKEY_verify_recover_init(ctx) <= 0 ||
+		    EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_NO_PADDING) <= 0 ||
+		    EVP_PKEY_verify_recover(ctx, &recovered[0], &recoveredLen,
+		                           signature.const_byte_str(), signature.size()) <= 0)
+		{
+			ERROR_MSG("Raw RSA verify recover failed (0x%08X)", ERR_get_error());
+			EVP_PKEY_CTX_free(ctx);
+			return false;
+		}
+		EVP_PKEY_CTX_free(ctx);
+		recovered.resize(recoveredLen);
+
+		return (originalData == recovered);
 	}
 	else
 	{
-		// Call the generic function
+		// Call the generic function (hashing multi-step path)
 		return AsymmetricAlgorithm::verify(publicKey, originalData, signature, mechanism, param, paramLen);
 	}
 }
@@ -1098,7 +981,6 @@ bool OSSLRSA::verifyFinal(const ByteString& signature)
 	if (pSecondHash != NULL)
 	{
 		delete pSecondHash;
-
 		pSecondHash = NULL;
 	}
 
@@ -1109,97 +991,66 @@ bool OSSLRSA::verifyFinal(const ByteString& signature)
 
 	ByteString digest = firstHash + secondHash;
 
-	// Determine the signature NID type
-	int type = 0;
+	// Determine the EVP_MD and whether PSS is needed
 	bool isPSS = false;
 	const EVP_MD* hash = NULL;
+	int nid = NID_undef;
 
 	switch (mechanism)
 	{
-		case AsymMech::RSA_MD5_PKCS:
-			type = NID_md5;
-			break;
-		case AsymMech::RSA_SHA1_PKCS:
-			type = NID_sha1;
-			break;
-		case AsymMech::RSA_SHA224_PKCS:
-			type = NID_sha224;
-			break;
-		case AsymMech::RSA_SHA256_PKCS:
-			type = NID_sha256;
-			break;
-		case AsymMech::RSA_SHA384_PKCS:
-			type = NID_sha384;
-			break;
-		case AsymMech::RSA_SHA512_PKCS:
-			type = NID_sha512;
-			break;
-		case AsymMech::RSA_SHA1_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha1();
-			break;
-		case AsymMech::RSA_SHA224_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha224();
-			break;
-		case AsymMech::RSA_SHA256_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha256();
-			break;
-		case AsymMech::RSA_SHA384_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha384();
-			break;
-		case AsymMech::RSA_SHA512_PKCS_PSS:
-			isPSS = true;
-			hash = EVP_sha512();
-			break;
-		case AsymMech::RSA_SSL:
-			type = NID_md5_sha1;
-			break;
-		default:
-			break;
+		case AsymMech::RSA_MD5_PKCS:    nid = NID_md5;    break;
+		case AsymMech::RSA_SHA1_PKCS:   nid = NID_sha1;   break;
+		case AsymMech::RSA_SHA224_PKCS: nid = NID_sha224; break;
+		case AsymMech::RSA_SHA256_PKCS: nid = NID_sha256; break;
+		case AsymMech::RSA_SHA384_PKCS: nid = NID_sha384; break;
+		case AsymMech::RSA_SHA512_PKCS: nid = NID_sha512; break;
+		case AsymMech::RSA_SHA1_PKCS_PSS:   isPSS = true; hash = EVP_sha1();   break;
+		case AsymMech::RSA_SHA224_PKCS_PSS: isPSS = true; hash = EVP_sha224(); break;
+		case AsymMech::RSA_SHA256_PKCS_PSS: isPSS = true; hash = EVP_sha256(); break;
+		case AsymMech::RSA_SHA384_PKCS_PSS: isPSS = true; hash = EVP_sha384(); break;
+		case AsymMech::RSA_SHA512_PKCS_PSS: isPSS = true; hash = EVP_sha512(); break;
+		case AsymMech::RSA_SSL:         nid = NID_md5_sha1; break;
+		default: break;
 	}
 
-	// Perform the verify operation
-	bool rv;
+	EVP_PKEY* pkey = pk->getOSSLKey();
+	if (pkey == NULL)
+	{
+		ERROR_MSG("Could not get the OpenSSL public key");
+		return false;
+	}
+
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	bool rv = false;
+
+	if (ctx == NULL || EVP_PKEY_verify_init(ctx) <= 0)
+	{
+		ERROR_MSG("EVP_PKEY_verify_init failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
 
 	if (isPSS)
 	{
-		ByteString plain;
-		plain.resize(pk->getN().size());
-		int result = RSA_public_decrypt(signature.size(),
-						(unsigned char*) signature.const_byte_str(),
-						&plain[0],
-						pk->getOSSLKey(),
-						RSA_NO_PADDING);
-		if (result < 0)
-		{
-			rv = false;
-			ERROR_MSG("RSA public decrypt failed (0x%08X)", ERR_get_error());
-		}
-		else
-		{
-			plain.resize(result);
-			result = RSA_verify_PKCS1_PSS(pk->getOSSLKey(), &digest[0],
-						      hash, &plain[0], sLen);
-			if (result == 1)
-			{
-				rv = true;
-			}
-			else
-			{
-				rv = false;
-				ERROR_MSG("RSA PSS verify failed (0x%08X)", ERR_get_error());
-			}
-		}
+		rv = (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PSS_PADDING) > 0 &&
+		      EVP_PKEY_CTX_set_signature_md(ctx, hash) > 0 &&
+		      EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx, (int)sLen) > 0 &&
+		      EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, hash) > 0 &&
+		      EVP_PKEY_verify(ctx, signature.const_byte_str(), signature.size(),
+		                      &digest[0], digest.size()) == 1);
 	}
 	else
 	{
-		rv = (RSA_verify(type, &digest[0], digest.size(), (unsigned char*) signature.const_byte_str(), signature.size(), pk->getOSSLKey()) == 1);
-
-		if (!rv) ERROR_MSG("RSA verify failed (0x%08X)", ERR_get_error());
+		const EVP_MD* md = EVP_get_digestbynid(nid);
+		rv = (EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_PADDING) > 0 &&
+		      (md == NULL || EVP_PKEY_CTX_set_signature_md(ctx, md) > 0) &&
+		      EVP_PKEY_verify(ctx, signature.const_byte_str(), signature.size(),
+		                      &digest[0], digest.size()) == 1);
 	}
+
+	if (!rv) ERROR_MSG("RSA verify failed (0x%08X)", ERR_get_error());
+
+	EVP_PKEY_CTX_free(ctx);
 
 	return rv;
 }
@@ -1212,70 +1063,81 @@ bool OSSLRSA::encrypt(PublicKey* publicKey, const ByteString& data,
 	if (!publicKey->isOfType(OSSLRSAPublicKey::type))
 	{
 		ERROR_MSG("Invalid key type supplied");
-
 		return false;
 	}
 
-	// Retrieve the OpenSSL key object
-	RSA* rsa = ((OSSLRSAPublicKey*) publicKey)->getOSSLKey();
+	OSSLRSAPublicKey* osslKey = (OSSLRSAPublicKey*) publicKey;
+	EVP_PKEY* pkey = osslKey->getOSSLKey();
+	if (pkey == NULL)
+	{
+		ERROR_MSG("Could not get the OpenSSL public key");
+		return false;
+	}
 
-	// Check the data and padding algorithm
+	size_t nSize = osslKey->getN().size();
 	int osslPadding = 0;
 
 	if (padding == AsymMech::RSA_PKCS)
 	{
-		// The size of the input data cannot be more than the modulus
-		// length of the key - 11
-		if (data.size() > (size_t) (RSA_size(rsa) - 11))
+		if (data.size() > nSize - 11)
 		{
 			ERROR_MSG("Too much data supplied for RSA PKCS #1 encryption");
-
 			return false;
 		}
-
 		osslPadding = RSA_PKCS1_PADDING;
 	}
 	else if (padding == AsymMech::RSA_PKCS_OAEP)
 	{
-		// The size of the input data cannot be more than the modulus
-		// length of the key - 41
-		if (data.size() > (size_t) (RSA_size(rsa) - 41))
+		if (data.size() > nSize - 41)
 		{
 			ERROR_MSG("Too much data supplied for RSA OAEP encryption");
-
 			return false;
 		}
-
 		osslPadding = RSA_PKCS1_OAEP_PADDING;
 	}
 	else if (padding == AsymMech::RSA)
 	{
-		// The size of the input data should be exactly equal to the modulus length
-		if (data.size() != (size_t) RSA_size(rsa))
+		if (data.size() != nSize)
 		{
 			ERROR_MSG("Incorrect amount of input data supplied for raw RSA encryption");
-
 			return false;
 		}
-
 		osslPadding = RSA_NO_PADDING;
 	}
 	else
 	{
 		ERROR_MSG("Invalid padding mechanism supplied (%i)", padding);
-
 		return false;
 	}
 
-	// Perform the RSA operation
-	encryptedData.resize(RSA_size(rsa));
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	if (ctx == NULL || EVP_PKEY_encrypt_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_rsa_padding(ctx, osslPadding) <= 0)
+	{
+		ERROR_MSG("RSA encrypt init failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
 
-	if (RSA_public_encrypt(data.size(), (unsigned char*) data.const_byte_str(), &encryptedData[0], rsa, osslPadding) == -1)
+	// Query output size, then encrypt
+	size_t outLen = 0;
+	if (EVP_PKEY_encrypt(ctx, NULL, &outLen,
+	                     data.const_byte_str(), data.size()) <= 0)
+	{
+		ERROR_MSG("RSA encrypt size query failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+	encryptedData.resize(outLen);
+	if (EVP_PKEY_encrypt(ctx, &encryptedData[0], &outLen,
+	                     data.const_byte_str(), data.size()) <= 0)
 	{
 		ERROR_MSG("RSA public key encryption failed (0x%08X)", ERR_get_error());
-
+		EVP_PKEY_CTX_free(ctx);
 		return false;
 	}
+	EVP_PKEY_CTX_free(ctx);
+	encryptedData.resize(outLen);
 
 	return true;
 }
@@ -1288,53 +1150,66 @@ bool OSSLRSA::decrypt(PrivateKey* privateKey, const ByteString& encryptedData,
 	if (!privateKey->isOfType(OSSLRSAPrivateKey::type))
 	{
 		ERROR_MSG("Invalid key type supplied");
-
 		return false;
 	}
 
-	// Retrieve the OpenSSL key object
-	RSA* rsa = ((OSSLRSAPrivateKey*) privateKey)->getOSSLKey();
+	OSSLRSAPrivateKey* osslKey = (OSSLRSAPrivateKey*) privateKey;
+	EVP_PKEY* pkey = osslKey->getOSSLKey();
+	if (pkey == NULL)
+	{
+		ERROR_MSG("Could not get the OpenSSL private key");
+		return false;
+	}
+
+	size_t nSize = osslKey->getN().size();
 
 	// Check the input size
-	if (encryptedData.size() != (size_t) RSA_size(rsa))
+	if (encryptedData.size() != nSize)
 	{
 		ERROR_MSG("Invalid amount of input data supplied for RSA decryption");
-
 		return false;
 	}
 
-	// Determine the OpenSSL padding algorithm
 	int osslPadding = 0;
 
 	switch (padding)
 	{
-		case AsymMech::RSA_PKCS:
-			osslPadding = RSA_PKCS1_PADDING;
-			break;
-		case AsymMech::RSA_PKCS_OAEP:
-			osslPadding = RSA_PKCS1_OAEP_PADDING;
-			break;
-		case AsymMech::RSA:
-			osslPadding = RSA_NO_PADDING;
-			break;
+		case AsymMech::RSA_PKCS:      osslPadding = RSA_PKCS1_PADDING;      break;
+		case AsymMech::RSA_PKCS_OAEP: osslPadding = RSA_PKCS1_OAEP_PADDING; break;
+		case AsymMech::RSA:           osslPadding = RSA_NO_PADDING;          break;
 		default:
 			ERROR_MSG("Invalid padding mechanism supplied (%i)", padding);
 			return false;
 	}
 
-	// Perform the RSA operation
-	data.resize(RSA_size(rsa));
-
-	int decSize = RSA_private_decrypt(encryptedData.size(), (unsigned char*) encryptedData.const_byte_str(), &data[0], rsa, osslPadding);
-
-	if (decSize == -1)
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(pkey, NULL);
+	if (ctx == NULL || EVP_PKEY_decrypt_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_rsa_padding(ctx, osslPadding) <= 0)
 	{
-		ERROR_MSG("RSA private key decryption failed (0x%08X)", ERR_get_error());
-
+		ERROR_MSG("RSA decrypt init failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
 		return false;
 	}
 
-	data.resize(decSize);
+	// Query output size, then decrypt
+	size_t outLen = 0;
+	if (EVP_PKEY_decrypt(ctx, NULL, &outLen,
+	                     encryptedData.const_byte_str(), encryptedData.size()) <= 0)
+	{
+		ERROR_MSG("RSA decrypt size query failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+	data.resize(outLen);
+	if (EVP_PKEY_decrypt(ctx, &data[0], &outLen,
+	                     encryptedData.const_byte_str(), encryptedData.size()) <= 0)
+	{
+		ERROR_MSG("RSA private key decryption failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+	EVP_PKEY_CTX_free(ctx);
+	data.resize(outLen);
 
 	return true;
 }
@@ -1343,8 +1218,7 @@ bool OSSLRSA::decrypt(PrivateKey* privateKey, const ByteString& encryptedData,
 bool OSSLRSA::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameters* parameters, RNG* /*rng = NULL */)
 {
 	// Check parameters
-	if ((ppKeyPair == NULL) ||
-	    (parameters == NULL))
+	if ((ppKeyPair == NULL) || (parameters == NULL))
 	{
 		return false;
 	}
@@ -1352,7 +1226,6 @@ bool OSSLRSA::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameter
 	if (!parameters->areOfType(RSAParameters::type))
 	{
 		ERROR_MSG("Invalid parameters supplied for RSA key generation");
-
 		return false;
 	}
 
@@ -1361,7 +1234,6 @@ bool OSSLRSA::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameter
 	if (params->getBitLength() < getMinKeySize() || params->getBitLength() > getMaxKeySize())
 	{
 		ERROR_MSG("This RSA key size (%lu) is not supported", params->getBitLength());
-
 		return false;
 	}
 
@@ -1377,42 +1249,73 @@ bool OSSLRSA::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameter
 	if ((e == 0) || (e % 2 != 1))
 	{
 		ERROR_MSG("Invalid RSA public exponent %d", e);
-
 		return false;
 	}
 
-	// Generate the key-pair
-	RSA* rsa = RSA_new();
-	if (rsa == NULL)
-	{
-		ERROR_MSG("Failed to instantiate OpenSSL RSA object");
-
-		return false;
-	}
-
+	// Build key generation parameters
+	unsigned int bits = params->getBitLength();
 	BIGNUM* bn_e = OSSL::byteString2bn(params->getE());
+	if (bn_e == NULL)
+	{
+		ERROR_MSG("Failed to convert RSA public exponent");
+		return false;
+	}
 
-	// Check if the key was successfully generated
-	if (!RSA_generate_key_ex(rsa, params->getBitLength(), bn_e, NULL))
+	OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+	if (bld == NULL)
+	{
+		BN_free(bn_e);
+		return false;
+	}
+
+	if (!OSSL_PARAM_BLD_push_uint(bld, OSSL_PKEY_PARAM_RSA_BITS, bits) ||
+	    !OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_E, bn_e))
+	{
+		OSSL_PARAM_BLD_free(bld);
+		BN_free(bn_e);
+		return false;
+	}
+
+	OSSL_PARAM* gen_params = OSSL_PARAM_BLD_to_param(bld);
+	OSSL_PARAM_BLD_free(bld);
+	BN_free(bn_e);
+
+	if (gen_params == NULL)
+		return false;
+
+	// Generate the key-pair via EVP_PKEY_CTX
+	EVP_PKEY* pkey = NULL;
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+	if (ctx == NULL)
+	{
+		ERROR_MSG("Failed to instantiate EVP_PKEY_CTX for RSA key generation");
+		OSSL_PARAM_free(gen_params);
+		return false;
+	}
+
+	if (EVP_PKEY_keygen_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_params(ctx, gen_params) <= 0 ||
+	    EVP_PKEY_generate(ctx, &pkey) <= 0)
 	{
 		ERROR_MSG("RSA key generation failed (0x%08X)", ERR_get_error());
-		BN_free(bn_e);
-		RSA_free(rsa);
-
+		EVP_PKEY_CTX_free(ctx);
+		OSSL_PARAM_free(gen_params);
 		return false;
 	}
-	BN_free(bn_e);
+
+	EVP_PKEY_CTX_free(ctx);
+	OSSL_PARAM_free(gen_params);
 
 	// Create an asymmetric key-pair object to return
 	OSSLRSAKeyPair* kp = new OSSLRSAKeyPair();
 
-	((OSSLRSAPublicKey*) kp->getPublicKey())->setFromOSSL(rsa);
-	((OSSLRSAPrivateKey*) kp->getPrivateKey())->setFromOSSL(rsa);
+	((OSSLRSAPublicKey*) kp->getPublicKey())->setFromOSSL(pkey);
+	((OSSLRSAPrivateKey*) kp->getPrivateKey())->setFromOSSL(pkey);
 
 	*ppKeyPair = kp;
 
 	// Release the key
-	RSA_free(rsa);
+	EVP_PKEY_free(pkey);
 
 	return true;
 }
@@ -1420,7 +1323,6 @@ bool OSSLRSA::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameter
 unsigned long OSSLRSA::getMinKeySize()
 {
 #ifdef WITH_FIPS
-	// OPENSSL_RSA_FIPS_MIN_MODULUS_BITS is 1024
 	return 1024;
 #else
 	return 512;
@@ -1429,14 +1331,13 @@ unsigned long OSSLRSA::getMinKeySize()
 
 unsigned long OSSLRSA::getMaxKeySize()
 {
-	return OPENSSL_RSA_MAX_MODULUS_BITS;
+	return 16384;
 }
 
 bool OSSLRSA::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppKeyPair == NULL) ||
-	    (serialisedData.size() == 0))
+	if ((ppKeyPair == NULL) || (serialisedData.size() == 0))
 	{
 		return false;
 	}
@@ -1461,7 +1362,6 @@ bool OSSLRSA::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& seri
 	if (!rv)
 	{
 		delete kp;
-
 		return false;
 	}
 
@@ -1473,8 +1373,7 @@ bool OSSLRSA::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& seri
 bool OSSLRSA::reconstructPublicKey(PublicKey** ppPublicKey, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppPublicKey == NULL) ||
-	    (serialisedData.size() == 0))
+	if ((ppPublicKey == NULL) || (serialisedData.size() == 0))
 	{
 		return false;
 	}
@@ -1484,7 +1383,6 @@ bool OSSLRSA::reconstructPublicKey(PublicKey** ppPublicKey, ByteString& serialis
 	if (!pub->deserialise(serialisedData))
 	{
 		delete pub;
-
 		return false;
 	}
 
@@ -1496,8 +1394,7 @@ bool OSSLRSA::reconstructPublicKey(PublicKey** ppPublicKey, ByteString& serialis
 bool OSSLRSA::reconstructPrivateKey(PrivateKey** ppPrivateKey, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppPrivateKey == NULL) ||
-	    (serialisedData.size() == 0))
+	if ((ppPrivateKey == NULL) || (serialisedData.size() == 0))
 	{
 		return false;
 	}
@@ -1507,7 +1404,6 @@ bool OSSLRSA::reconstructPrivateKey(PrivateKey** ppPrivateKey, ByteString& seria
 	if (!priv->deserialise(serialisedData))
 	{
 		delete priv;
-
 		return false;
 	}
 
@@ -1544,7 +1440,6 @@ bool OSSLRSA::reconstructParameters(AsymmetricParameters** ppParams, ByteString&
 	if (!params->deserialise(serialisedData))
 	{
 		delete params;
-
 		return false;
 	}
 

@@ -27,7 +27,7 @@
 /*****************************************************************************
  OSSLECDH.cpp
 
- OpenSSL Diffie-Hellman asymmetric algorithm implementation
+ OpenSSL Diffie-Hellman asymmetric algorithm implementation — EVP_PKEY throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #include "config.h"
@@ -39,33 +39,28 @@
 #include "OSSLECKeyPair.h"
 #include "OSSLUtil.h"
 #include <algorithm>
-#include <openssl/ecdh.h>
-#include <openssl/pem.h>
+#include <openssl/core_names.h>
 #include <openssl/err.h>
-#ifdef WITH_FIPS
-#include <openssl/fips.h>
-#endif
+#include <openssl/evp.h>
+#include <openssl/objects.h>
 
 // Signing functions
 bool OSSLECDH::signInit(PrivateKey* /*privateKey*/, const AsymMech::Type /*mechanism*/,
 			const void* /* param = NULL */, const size_t /* paramLen = 0 */)
 {
 	ERROR_MSG("ECDH does not support signing");
-
 	return false;
 }
 
 bool OSSLECDH::signUpdate(const ByteString& /*dataToSign*/)
 {
 	ERROR_MSG("ECDH does not support signing");
-
 	return false;
 }
 
 bool OSSLECDH::signFinal(ByteString& /*signature*/)
 {
 	ERROR_MSG("ECDH does not support signing");
-
 	return false;
 }
 
@@ -74,21 +69,18 @@ bool OSSLECDH::verifyInit(PublicKey* /*publicKey*/, const AsymMech::Type /*mecha
 			  const void* /* param = NULL */, const size_t /* paramLen = 0 */)
 {
 	ERROR_MSG("ECDH does not support verifying");
-
 	return false;
 }
 
 bool OSSLECDH::verifyUpdate(const ByteString& /*originalData*/)
 {
 	ERROR_MSG("ECDH does not support verifying");
-
 	return false;
 }
 
 bool OSSLECDH::verifyFinal(const ByteString& /*signature*/)
 {
 	ERROR_MSG("ECDH does not support verifying");
-
 	return false;
 }
 
@@ -97,7 +89,6 @@ bool OSSLECDH::encrypt(PublicKey* /*publicKey*/, const ByteString& /*data*/,
 		       ByteString& /*encryptedData*/, const AsymMech::Type /*padding*/)
 {
 	ERROR_MSG("ECDH does not support encryption");
-
 	return false;
 }
 
@@ -106,7 +97,6 @@ bool OSSLECDH::decrypt(PrivateKey* /*privateKey*/, const ByteString& /*encrypted
 		       ByteString& /*data*/, const AsymMech::Type /*padding*/)
 {
 	ERROR_MSG("ECDH does not support decryption");
-
 	return false;
 }
 
@@ -114,54 +104,68 @@ bool OSSLECDH::decrypt(PrivateKey* /*privateKey*/, const ByteString& /*encrypted
 bool OSSLECDH::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParameters* parameters, RNG* /*rng = NULL */)
 {
 	// Check parameters
-	if ((ppKeyPair == NULL) ||
-	    (parameters == NULL))
-	{
+	if ((ppKeyPair == NULL) || (parameters == NULL))
 		return false;
-	}
 
 	if (!parameters->areOfType(ECParameters::type))
 	{
 		ERROR_MSG("Invalid parameters supplied for ECDH key generation");
-
 		return false;
 	}
 
 	ECParameters* params = (ECParameters*) parameters;
 
-	// Generate the key-pair
-	EC_KEY* eckey = EC_KEY_new();
-
-	if (eckey == NULL)
+	// Determine the curve short name from DER-encoded ECParameters
+	EC_GROUP* grp = OSSL::byteString2grp(params->getEC());
+	if (grp == NULL)
 	{
-		ERROR_MSG("Failed to instantiate OpenSSL ECDH object");
-
+		ERROR_MSG("Failed to decode EC group for ECDH key generation");
 		return false;
 	}
-
-	EC_GROUP* grp = OSSL::byteString2grp(params->getEC());
-	EC_KEY_set_group(eckey, grp);
+	int nid = EC_GROUP_get_curve_name(grp);
+	const char* curve_name = OBJ_nid2sn(nid);
 	EC_GROUP_free(grp);
 
-	if (!EC_KEY_generate_key(eckey))
+	if (curve_name == NULL)
 	{
-		ERROR_MSG("ECDH key generation failed (0x%08X)", ERR_get_error());
-
-		EC_KEY_free(eckey);
-
+		ERROR_MSG("Failed to get curve name for ECDH key generation");
 		return false;
 	}
+
+	// Generate the key-pair via EVP_PKEY_CTX
+	EVP_PKEY* pkey = NULL;
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "EC", NULL);
+	if (ctx == NULL)
+	{
+		ERROR_MSG("Failed to instantiate EVP_PKEY_CTX for EC key generation");
+		return false;
+	}
+
+	OSSL_PARAM keygen_params[2];
+	keygen_params[0] = OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME,
+	                                                     (char*)curve_name, 0);
+	keygen_params[1] = OSSL_PARAM_construct_end();
+
+	if (EVP_PKEY_keygen_init(ctx) <= 0 ||
+	    EVP_PKEY_CTX_set_params(ctx, keygen_params) <= 0 ||
+	    EVP_PKEY_generate(ctx, &pkey) <= 0)
+	{
+		ERROR_MSG("ECDH key generation failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+	EVP_PKEY_CTX_free(ctx);
 
 	// Create an asymmetric key-pair object to return
 	OSSLECKeyPair* kp = new OSSLECKeyPair();
 
-	((OSSLECPublicKey*) kp->getPublicKey())->setFromOSSL(eckey);
-	((OSSLECPrivateKey*) kp->getPrivateKey())->setFromOSSL(eckey);
+	((OSSLECPublicKey*) kp->getPublicKey())->setFromOSSL(pkey);
+	((OSSLECPrivateKey*) kp->getPrivateKey())->setFromOSSL(pkey);
 
 	*ppKeyPair = kp;
 
 	// Release the key
-	EC_KEY_free(eckey);
+	EVP_PKEY_free(pkey);
 
 	return true;
 }
@@ -169,64 +173,61 @@ bool OSSLECDH::generateKeyPair(AsymmetricKeyPair** ppKeyPair, AsymmetricParamete
 bool OSSLECDH::deriveKey(SymmetricKey **ppSymmetricKey, PublicKey* publicKey, PrivateKey* privateKey)
 {
 	// Check parameters
-	if ((ppSymmetricKey == NULL) ||
-	    (publicKey == NULL) ||
-	    (privateKey == NULL))
-	{
+	if ((ppSymmetricKey == NULL) || (publicKey == NULL) || (privateKey == NULL))
 		return false;
-	}
 
 	// Get keys
-	EC_KEY *pub = ((OSSLECPublicKey *)publicKey)->getOSSLKey();
-	EC_KEY *priv = ((OSSLECPrivateKey *)privateKey)->getOSSLKey();
-	if (pub == NULL || EC_KEY_get0_public_key(pub) == NULL || priv == NULL)
+	EVP_PKEY* pub  = ((OSSLECPublicKey*)publicKey)->getOSSLKey();
+	EVP_PKEY* priv = ((OSSLECPrivateKey*)privateKey)->getOSSLKey();
+	if (pub == NULL || priv == NULL)
 	{
-		ERROR_MSG("Failed to get OpenSSL ECDH keys");
-
+		ERROR_MSG("Failed to get OpenSSL EC keys");
 		return false;
 	}
 
-	// Use the OpenSSL implementation and not any engine
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
-
-#ifdef WITH_FIPS
-	if (FIPS_mode())
+	// Set up derivation context using the private key
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(priv, NULL);
+	if (ctx == NULL)
 	{
-		ECDH_set_method(pub, FIPS_ecdh_openssl());
-		ECDH_set_method(priv, FIPS_ecdh_openssl());
+		ERROR_MSG("Failed to create EVP_PKEY_CTX for ECDH derivation");
+		return false;
 	}
-	else
+
+	if (EVP_PKEY_derive_init(ctx) <= 0)
 	{
-		ECDH_set_method(pub, ECDH_OpenSSL());
-		ECDH_set_method(priv, ECDH_OpenSSL());
+		ERROR_MSG("Failed to init ECDH derivation");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
 	}
-#else
-	ECDH_set_method(pub, ECDH_OpenSSL());
-	ECDH_set_method(priv, ECDH_OpenSSL());
-#endif
 
-#else
-	EC_KEY_set_method(pub, EC_KEY_OpenSSL());
-	EC_KEY_set_method(priv, EC_KEY_OpenSSL());
-#endif
+	if (EVP_PKEY_derive_set_peer(ctx, pub) <= 0)
+	{
+		ERROR_MSG("Failed to set ECDH peer key");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
 
-	// Derive the secret
-	ByteString secret, derivedSecret;
-	int size = ((OSSLECPublicKey *)publicKey)->getOrderLength();
-	secret.wipe(size);
-	derivedSecret.wipe(size);
-	int keySize = ECDH_compute_key(&derivedSecret[0], derivedSecret.size(), EC_KEY_get0_public_key(pub), priv, NULL);
+	// Derive the shared secret
+	size_t len = 0;
+	if (EVP_PKEY_derive(ctx, NULL, &len) <= 0)
+	{
+		ERROR_MSG("Failed to get ECDH secret length");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
 
-	if (keySize <= 0)
+	ByteString secret;
+	secret.resize(len);
+	if (EVP_PKEY_derive(ctx, &secret[0], &len) <= 0)
 	{
 		ERROR_MSG("ECDH key derivation failed (0x%08X)", ERR_get_error());
-
+		EVP_PKEY_CTX_free(ctx);
 		return false;
 	}
+	EVP_PKEY_CTX_free(ctx);
+	secret.resize(len);
 
-	// We compensate that OpenSSL removes leading zeros
-	memcpy(&secret[0] + size - keySize, &derivedSecret[0], keySize);
-
+	// Create derived symmetric key
 	*ppSymmetricKey = new SymmetricKey(secret.size() * 8);
 	if (*ppSymmetricKey == NULL)
 		return false;
@@ -255,11 +256,8 @@ unsigned long OSSLECDH::getMaxKeySize()
 bool OSSLECDH::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppKeyPair == NULL) ||
-	    (serialisedData.size() == 0))
-	{
+	if ((ppKeyPair == NULL) || (serialisedData.size() == 0))
 		return false;
-	}
 
 	ByteString dPub = ByteString::chainDeserialise(serialisedData);
 	ByteString dPriv = ByteString::chainDeserialise(serialisedData);
@@ -269,19 +267,14 @@ bool OSSLECDH::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& ser
 	bool rv = true;
 
 	if (!((ECPublicKey*) kp->getPublicKey())->deserialise(dPub))
-	{
 		rv = false;
-	}
 
 	if (!((ECPrivateKey*) kp->getPrivateKey())->deserialise(dPriv))
-	{
 		rv = false;
-	}
 
 	if (!rv)
 	{
 		delete kp;
-
 		return false;
 	}
 
@@ -293,18 +286,14 @@ bool OSSLECDH::reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& ser
 bool OSSLECDH::reconstructPublicKey(PublicKey** ppPublicKey, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppPublicKey == NULL) ||
-	    (serialisedData.size() == 0))
-	{
+	if ((ppPublicKey == NULL) || (serialisedData.size() == 0))
 		return false;
-	}
 
 	OSSLECPublicKey* pub = new OSSLECPublicKey();
 
 	if (!pub->deserialise(serialisedData))
 	{
 		delete pub;
-
 		return false;
 	}
 
@@ -316,18 +305,14 @@ bool OSSLECDH::reconstructPublicKey(PublicKey** ppPublicKey, ByteString& seriali
 bool OSSLECDH::reconstructPrivateKey(PrivateKey** ppPrivateKey, ByteString& serialisedData)
 {
 	// Check input
-	if ((ppPrivateKey == NULL) ||
-	    (serialisedData.size() == 0))
-	{
+	if ((ppPrivateKey == NULL) || (serialisedData.size() == 0))
 		return false;
-	}
 
 	OSSLECPrivateKey* priv = new OSSLECPrivateKey();
 
 	if (!priv->deserialise(serialisedData))
 	{
 		delete priv;
-
 		return false;
 	}
 
@@ -355,16 +340,13 @@ bool OSSLECDH::reconstructParameters(AsymmetricParameters** ppParams, ByteString
 {
 	// Check input parameters
 	if ((ppParams == NULL) || (serialisedData.size() == 0))
-	{
 		return false;
-	}
 
 	ECParameters* params = new ECParameters();
 
 	if (!params->deserialise(serialisedData))
 	{
 		delete params;
-
 		return false;
 	}
 

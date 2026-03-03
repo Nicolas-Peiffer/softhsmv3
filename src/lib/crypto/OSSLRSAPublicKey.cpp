@@ -27,37 +27,36 @@
 /*****************************************************************************
  OSSLRSAPublicKey.cpp
 
- OpenSSL RSA public key class
+ OpenSSL RSA public key class — EVP_PKEY throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #include "config.h"
 #include "log.h"
-#include "OSSLComp.h"
 #include "OSSLRSAPublicKey.h"
 #include "OSSLUtil.h"
 #include <string.h>
 #include <openssl/bn.h>
-#ifdef WITH_FIPS
-#include <openssl/fips.h>
-#endif
+#include <openssl/core_names.h>
+#include <openssl/err.h>
+#include <openssl/param_build.h>
 
 // Constructors
 OSSLRSAPublicKey::OSSLRSAPublicKey()
 {
-	rsa = NULL;
+	pkey = NULL;
 }
 
-OSSLRSAPublicKey::OSSLRSAPublicKey(const RSA* inRSA)
+OSSLRSAPublicKey::OSSLRSAPublicKey(const EVP_PKEY* inPKEY)
 {
-	rsa = NULL;
+	pkey = NULL;
 
-	setFromOSSL(inRSA);
+	setFromOSSL(inPKEY);
 }
 
 // Destructor
 OSSLRSAPublicKey::~OSSLRSAPublicKey()
 {
-	RSA_free(rsa);
+	EVP_PKEY_free(pkey);
 }
 
 // The type
@@ -69,23 +68,23 @@ bool OSSLRSAPublicKey::isOfType(const char* inType)
 	return !strcmp(type, inType);
 }
 
-// Set from OpenSSL representation
-void OSSLRSAPublicKey::setFromOSSL(const RSA* inRSA)
+// Set from OpenSSL EVP_PKEY representation
+void OSSLRSAPublicKey::setFromOSSL(const EVP_PKEY* inPKEY)
 {
-	const BIGNUM* bn_n = NULL;
-	const BIGNUM* bn_e = NULL;
+	BIGNUM* bn_n = NULL;
+	BIGNUM* bn_e = NULL;
 
-	RSA_get0_key(inRSA, &bn_n, &bn_e, NULL);
-
-	if (bn_n)
+	if (EVP_PKEY_get_bn_param(inPKEY, OSSL_PKEY_PARAM_RSA_N, &bn_n) && bn_n)
 	{
 		ByteString inN = OSSL::bn2ByteString(bn_n);
 		setN(inN);
+		BN_free(bn_n);
 	}
-	if (bn_e)
+	if (EVP_PKEY_get_bn_param(inPKEY, OSSL_PKEY_PARAM_RSA_E, &bn_e) && bn_e)
 	{
 		ByteString inE = OSSL::bn2ByteString(bn_e);
 		setE(inE);
+		BN_free(bn_e);
 	}
 }
 
@@ -94,10 +93,10 @@ void OSSLRSAPublicKey::setN(const ByteString& inN)
 {
 	RSAPublicKey::setN(inN);
 
-	if (rsa)
+	if (pkey)
 	{
-		RSA_free(rsa);
-		rsa = NULL;
+		EVP_PKEY_free(pkey);
+		pkey = NULL;
 	}
 }
 
@@ -105,51 +104,74 @@ void OSSLRSAPublicKey::setE(const ByteString& inE)
 {
 	RSAPublicKey::setE(inE);
 
-	if (rsa)
+	if (pkey)
 	{
-		RSA_free(rsa);
-		rsa = NULL;
+		EVP_PKEY_free(pkey);
+		pkey = NULL;
 	}
 }
 
-// Retrieve the OpenSSL representation of the key
-RSA* OSSLRSAPublicKey::getOSSLKey()
+// Retrieve the OpenSSL EVP_PKEY representation of the key (built lazily)
+EVP_PKEY* OSSLRSAPublicKey::getOSSLKey()
 {
-	if (rsa == NULL) createOSSLKey();
+	if (pkey != NULL)
+		return pkey;
 
-	return rsa;
-}
-
-// Create the OpenSSL representation of the key
-void OSSLRSAPublicKey::createOSSLKey()
-{
-	if (rsa != NULL) return;
-
-	rsa = RSA_new();
-	if (rsa == NULL)
-	{
-		ERROR_MSG("Could not create RSA object");
-		return;
-	}
-
-	// Use the OpenSSL implementation and not any engine
-#if OPENSSL_VERSION_NUMBER < 0x10100000L || defined(LIBRESSL_VERSION_NUMBER)
-
-#ifdef WITH_FIPS
-	if (FIPS_mode())
-		RSA_set_method(rsa, FIPS_rsa_pkcs1_ssleay());
-	else
-		RSA_set_method(rsa, RSA_PKCS1_SSLeay());
-#else
-	RSA_set_method(rsa, RSA_PKCS1_SSLeay());
-#endif
-
-#else
-	RSA_set_method(rsa, RSA_PKCS1_OpenSSL());
-#endif
+	if (n.size() == 0 || e.size() == 0)
+		return NULL;
 
 	BIGNUM* bn_n = OSSL::byteString2bn(n);
 	BIGNUM* bn_e = OSSL::byteString2bn(e);
 
-	RSA_set0_key(rsa, bn_n, bn_e, NULL);
+	if (bn_n == NULL || bn_e == NULL)
+	{
+		BN_free(bn_n);
+		BN_free(bn_e);
+		return NULL;
+	}
+
+	OSSL_PARAM_BLD* bld = OSSL_PARAM_BLD_new();
+	if (bld == NULL)
+	{
+		BN_free(bn_n);
+		BN_free(bn_e);
+		return NULL;
+	}
+
+	if (!OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_N, bn_n) ||
+	    !OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_RSA_E, bn_e))
+	{
+		OSSL_PARAM_BLD_free(bld);
+		BN_free(bn_n);
+		BN_free(bn_e);
+		return NULL;
+	}
+
+	OSSL_PARAM* params = OSSL_PARAM_BLD_to_param(bld);
+	OSSL_PARAM_BLD_free(bld);
+	BN_free(bn_n);
+	BN_free(bn_e);
+
+	if (params == NULL)
+		return NULL;
+
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "RSA", NULL);
+	if (ctx == NULL)
+	{
+		OSSL_PARAM_free(params);
+		return NULL;
+	}
+
+	if (EVP_PKEY_fromdata_init(ctx) <= 0 ||
+	    EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_PUBLIC_KEY, params) <= 0)
+	{
+		ERROR_MSG("Could not build EVP_PKEY for RSA public key (0x%08X)", ERR_get_error());
+		EVP_PKEY_free(pkey);
+		pkey = NULL;
+	}
+
+	EVP_PKEY_CTX_free(ctx);
+	OSSL_PARAM_free(params);
+
+	return pkey;
 }

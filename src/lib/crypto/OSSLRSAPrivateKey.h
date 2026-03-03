@@ -27,7 +27,7 @@
 /*****************************************************************************
  OSSLRSAPrivateKey.h
 
- OpenSSL RSA private key class
+ OpenSSL RSA private key class — EVP_PKEY throughout (OpenSSL 3.x)
  *****************************************************************************/
 
 #ifndef _SOFTHSM_V2_OSSLRSAPRIVATEKEY_H
@@ -35,7 +35,7 @@
 
 #include "config.h"
 #include "RSAPrivateKey.h"
-#include <openssl/rsa.h>
+#include <openssl/evp.h>
 
 class OSSLRSAPrivateKey : public RSAPrivateKey
 {
@@ -43,7 +43,7 @@ public:
 	// Constructors
 	OSSLRSAPrivateKey();
 
-	OSSLRSAPrivateKey(const RSA* inRSA);
+	OSSLRSAPrivateKey(const EVP_PKEY* inPKEY);
 
 	// Destructor
 	virtual ~OSSLRSAPrivateKey();
@@ -72,19 +72,15 @@ public:
 	// Decode from PKCS#8 BER
 	virtual bool PKCS8Decode(const ByteString& ber);
 
-	// Set from OpenSSL representation
-	virtual void setFromOSSL(const RSA* inRSA);
+	// Set from OpenSSL EVP_PKEY representation
+	virtual void setFromOSSL(const EVP_PKEY* inPKEY);
 
-	// Retrieve the OpenSSL representation of the key
-	RSA* getOSSLKey();
+	// Retrieve the OpenSSL EVP_PKEY representation of the key (built lazily)
+	EVP_PKEY* getOSSLKey();
 
 private:
-	// The internal OpenSSL representation
-	RSA* rsa;
-
-	// Create the OpenSSL representation of the key
-	void createOSSLKey();
+	// The internal OpenSSL representation (built lazily from key components)
+	EVP_PKEY* pkey;
 };
 
 #endif // !_SOFTHSM_V2_OSSLRSAPRIVATEKEY_H
-
