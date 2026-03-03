@@ -2230,7 +2230,70 @@ CK_RV SoftHSM::C_VerifyFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
 		return AsymVerifyFinal(session, pSignature, ulSignatureLen);
 }
 
-// ── PKCS#11 v3.0: one-shot message signing ───────────────────────────────────────────────────
+// ── PKCS#11 v3.0/v3.2: message signing ───────────────────────────────────────────────────────
+
+// applyPerMessageParam — shared helper for C_SignMessage / C_SignMessageBegin /
+// C_SignMessageNext / C_VerifyMessage / C_VerifyMessageBegin / C_VerifyMessageNext.
+// Merges a per-message CK_SIGN_ADDITIONAL_CONTEXT or CK_HASH_SIGN_ADDITIONAL_CONTEXT
+// into the session's existing ML-DSA or SLH-DSA parameters while preserving the
+// preHash / hashAlg values baked in at C_MessageSignInit / C_MessageVerifyInit time.
+// Returns CKR_OK immediately if pParameter is NULL or ulParameterLen is 0.
+static CK_RV applyPerMessageParam(Session* session,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen)
+{
+	if (pParameter == NULL_PTR || ulParameterLen == 0)
+		return CKR_OK;
+
+	AsymMech::Type mech = session->getMechanism();
+
+	if (mech >= AsymMech::MLDSA && mech <= AsymMech::HASH_MLDSA_SHAKE256)
+	{
+		size_t existingLen;
+		void* existing = session->getParameters(existingLen);
+
+		MLDSA_SIGN_PARAMS mldsaParam;
+		CK_MECHANISM fakeMech;
+		fakeMech.mechanism = CKM_ML_DSA;
+		fakeMech.pParameter = pParameter;
+		fakeMech.ulParameterLen = ulParameterLen;
+		CK_RV rv2 = parseMLDSASignContext(&fakeMech, mldsaParam);
+		if (rv2 != CKR_OK) return rv2;
+
+		// Preserve preHash / hashAlg set by the init mechanism
+		if (existing && existingLen == sizeof(MLDSA_SIGN_PARAMS))
+		{
+			MLDSA_SIGN_PARAMS* initParams = (MLDSA_SIGN_PARAMS*)existing;
+			mldsaParam.preHash = initParams->preHash;
+			mldsaParam.hashAlg = initParams->hashAlg;
+		}
+		if (!session->setParameters(&mldsaParam, sizeof(mldsaParam)))
+			return CKR_HOST_MEMORY;
+	}
+	else if (mech >= AsymMech::SLHDSA && mech <= AsymMech::HASH_SLHDSA_SHAKE256)
+	{
+		size_t existingLen;
+		void* existing = session->getParameters(existingLen);
+
+		SLHDSA_SIGN_PARAMS slhdsaParam;
+		CK_MECHANISM fakeMech;
+		fakeMech.mechanism = CKM_SLH_DSA;
+		fakeMech.pParameter = pParameter;
+		fakeMech.ulParameterLen = ulParameterLen;
+		CK_RV rv2 = parseSLHDSASignContext(&fakeMech, slhdsaParam);
+		if (rv2 != CKR_OK) return rv2;
+
+		// Preserve preHash / hashAlg set by the init mechanism
+		if (existing && existingLen == sizeof(SLHDSA_SIGN_PARAMS))
+		{
+			SLHDSA_SIGN_PARAMS* initParams = (SLHDSA_SIGN_PARAMS*)existing;
+			slhdsaParam.preHash = initParams->preHash;
+			slhdsaParam.hashAlg = initParams->hashAlg;
+		}
+		if (!session->setParameters(&slhdsaParam, sizeof(slhdsaParam)))
+			return CKR_HOST_MEMORY;
+	}
+	return CKR_OK;
+}
 
 // C_MessageSignInit — initialise a multi-message sign context (PKCS#11 v3.0 §5.8.1)
 CK_RV SoftHSM::C_MessageSignInit(CK_SESSION_HANDLE hSession,
@@ -2265,35 +2328,8 @@ CK_RV SoftHSM::C_SignMessage(CK_SESSION_HANDLE hSession,
 	if (session->getOpType() != SESSION_OP_MESSAGE_SIGN)
 		return CKR_OPERATION_NOT_INITIALIZED;
 
-	// Per-message ML-DSA parameter override (PKCS#11 v3.2 §5.8.5)
-	// Allows overriding context string and hedging for this specific message
-	if (pParameter != NULL_PTR && ulParameterLen > 0)
-	{
-		AsymMech::Type mech = session->getMechanism();
-		if (mech >= AsymMech::MLDSA && mech <= AsymMech::HASH_MLDSA_SHAKE256)
-		{
-			// Preserve pre-hash settings from init mechanism
-			size_t existingLen;
-			void* existing = session->getParameters(existingLen);
-
-			MLDSA_SIGN_PARAMS mldsaParam;
-			CK_MECHANISM fakeMech;
-			fakeMech.mechanism = CKM_ML_DSA;
-			fakeMech.pParameter = pParameter;
-			fakeMech.ulParameterLen = ulParameterLen;
-			CK_RV rv2 = parseMLDSASignContext(&fakeMech, mldsaParam);
-			if (rv2 != CKR_OK) return rv2;
-
-			if (existing && existingLen == sizeof(MLDSA_SIGN_PARAMS))
-			{
-				MLDSA_SIGN_PARAMS* initParams = (MLDSA_SIGN_PARAMS*)existing;
-				mldsaParam.preHash = initParams->preHash;
-				mldsaParam.hashAlg = initParams->hashAlg;
-			}
-			if (!session->setParameters(&mldsaParam, sizeof(mldsaParam)))
-				return CKR_HOST_MEMORY;
-		}
-	}
+	// Per-message parameter override (PKCS#11 v3.2 §5.8.5) — ML-DSA and SLH-DSA context / hedging
+	{ CK_RV rv2 = applyPerMessageParam(session, pParameter, ulParameterLen); if (rv2 != CKR_OK) return rv2; }
 
 	// AsymSign expects SESSION_OP_SIGN; temporarily satisfy that check.
 	// AsymSign calls resetOp() before returning (both size-query and real sign),
@@ -2351,33 +2387,8 @@ CK_RV SoftHSM::C_VerifyMessage(CK_SESSION_HANDLE hSession,
 	if (session->getOpType() != SESSION_OP_MESSAGE_VERIFY)
 		return CKR_OPERATION_NOT_INITIALIZED;
 
-	// Per-message ML-DSA parameter override (PKCS#11 v3.2 §5.8.8)
-	if (pParameter != NULL_PTR && ulParameterLen > 0)
-	{
-		AsymMech::Type mech = session->getMechanism();
-		if (mech >= AsymMech::MLDSA && mech <= AsymMech::HASH_MLDSA_SHAKE256)
-		{
-			size_t existingLen;
-			void* existing = session->getParameters(existingLen);
-
-			MLDSA_SIGN_PARAMS mldsaParam;
-			CK_MECHANISM fakeMech;
-			fakeMech.mechanism = CKM_ML_DSA;
-			fakeMech.pParameter = pParameter;
-			fakeMech.ulParameterLen = ulParameterLen;
-			CK_RV rv2 = parseMLDSASignContext(&fakeMech, mldsaParam);
-			if (rv2 != CKR_OK) return rv2;
-
-			if (existing && existingLen == sizeof(MLDSA_SIGN_PARAMS))
-			{
-				MLDSA_SIGN_PARAMS* initParams = (MLDSA_SIGN_PARAMS*)existing;
-				mldsaParam.preHash = initParams->preHash;
-				mldsaParam.hashAlg = initParams->hashAlg;
-			}
-			if (!session->setParameters(&mldsaParam, sizeof(mldsaParam)))
-				return CKR_HOST_MEMORY;
-		}
-	}
+	// Per-message parameter override (PKCS#11 v3.2 §5.8.8) — ML-DSA and SLH-DSA context / hedging
+	{ CK_RV rv2 = applyPerMessageParam(session, pParameter, ulParameterLen); if (rv2 != CKR_OK) return rv2; }
 
 	// AsymVerify expects SESSION_OP_VERIFY; temporarily satisfy that check.
 	// AsymVerify calls resetOp() before returning, so restore MESSAGE_VERIFY on
@@ -2400,6 +2411,125 @@ CK_RV SoftHSM::C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
 		return CKR_OPERATION_NOT_INITIALIZED;
 	session->resetOp();
 	return CKR_OK;
+}
+
+// ── PKCS#11 v3.2: streaming message signing (commit-then-sign) ───────────────────────────────
+//
+// State machine for C_SignMessageBegin / C_SignMessageNext:
+//
+//   C_MessageSignInit()       → SESSION_OP_MESSAGE_SIGN (0x11)
+//     C_SignMessageBegin()    → stores per-message param → SESSION_OP_MESSAGE_SIGN_BEGIN (0x13)
+//       C_SignMessageNext(NULL)   → size query, stays in MESSAGE_SIGN_BEGIN
+//       C_SignMessageNext(buf)    → sign, → back to MESSAGE_SIGN (0x11)
+//     C_SignMessage() / repeat
+//   C_MessageSignFinal()      → SESSION_OP_NONE
+//
+// The verify side is symmetric (0x12 / 0x14).
+
+// C_SignMessageBegin — commit per-message parameters before streaming sign (PKCS#11 v3.2 §5.8.3)
+CK_RV SoftHSM::C_SignMessageBegin(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (session->getOpType() != SESSION_OP_MESSAGE_SIGN)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	// Merge per-message pParameter (context string, hedging) into session params.
+	// preHash / hashAlg from init time are always preserved by applyPerMessageParam.
+	CK_RV rv = applyPerMessageParam(session, pParameter, ulParameterLen);
+	if (rv != CKR_OK) return rv;
+
+	session->setOpType(SESSION_OP_MESSAGE_SIGN_BEGIN);
+	return CKR_OK;
+}
+
+// C_SignMessageNext — perform (or size-query) one message sign (PKCS#11 v3.2 §5.8.4)
+// pSignature == NULL_PTR → size query; session stays in MESSAGE_SIGN_BEGIN.
+// pSignature != NULL_PTR → actual sign; session returns to MESSAGE_SIGN on success.
+CK_RV SoftHSM::C_SignMessageNext(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen,
+	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+	CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pData == NULL_PTR || pulSignatureLen == NULL_PTR) return CKR_ARGUMENTS_BAD;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (session->getOpType() != SESSION_OP_MESSAGE_SIGN_BEGIN)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	// pParameter in Next overrides Begin's committed params (spec §5.8.4: may be NULL)
+	CK_RV rv = applyPerMessageParam(session, pParameter, ulParameterLen);
+	if (rv != CKR_OK) return rv;
+
+	// AsymSign requires SESSION_OP_SIGN; satisfy temporarily then restore.
+	// Size-query path (pSignature==NULL): AsymSign does not call resetOp, so session
+	// crypto objects survive — stay in BEGIN to allow a subsequent real-sign call.
+	// Real sign path (pSignature!=NULL): AsymSign calls resetOp, restore MESSAGE_SIGN
+	// so the caller may begin another message under the same session.
+	session->setOpType(SESSION_OP_SIGN);
+	rv = AsymSign(session, pData, ulDataLen, pSignature, pulSignatureLen);
+	if (rv == CKR_OK)
+	{
+		if (pSignature != NULL_PTR)
+			session->setOpType(SESSION_OP_MESSAGE_SIGN);   // message complete
+		else
+			session->setOpType(SESSION_OP_MESSAGE_SIGN_BEGIN); // size query, stay
+	}
+	return rv;
+}
+
+// C_VerifyMessageBegin — commit per-message parameters before streaming verify (PKCS#11 v3.2 §5.8.9)
+CK_RV SoftHSM::C_VerifyMessageBegin(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (session->getOpType() != SESSION_OP_MESSAGE_VERIFY)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	CK_RV rv = applyPerMessageParam(session, pParameter, ulParameterLen);
+	if (rv != CKR_OK) return rv;
+
+	session->setOpType(SESSION_OP_MESSAGE_VERIFY_BEGIN);
+	return CKR_OK;
+}
+
+// C_VerifyMessageNext — perform one message verify (PKCS#11 v3.2 §5.8.10)
+// Verification always requires a signature buffer; no size-query path.
+// On success the session returns to MESSAGE_VERIFY.
+CK_RV SoftHSM::C_VerifyMessageNext(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen,
+	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+	CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pData == NULL_PTR || pSignature == NULL_PTR) return CKR_ARGUMENTS_BAD;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	if (session->getOpType() != SESSION_OP_MESSAGE_VERIFY_BEGIN)
+		return CKR_OPERATION_NOT_INITIALIZED;
+
+	CK_RV rv = applyPerMessageParam(session, pParameter, ulParameterLen);
+	if (rv != CKR_OK) return rv;
+
+	// AsymVerify requires SESSION_OP_VERIFY; satisfy temporarily then restore.
+	session->setOpType(SESSION_OP_VERIFY);
+	rv = AsymVerify(session, pData, ulDataLen, pSignature, ulSignatureLen);
+	if (rv == CKR_OK)
+		session->setOpType(SESSION_OP_MESSAGE_VERIFY);
+	return rv;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

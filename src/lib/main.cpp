@@ -1562,18 +1562,35 @@ PKCS_API CK_RV C_SignMessage(CK_SESSION_HANDLE hSession,
 	return CKR_FUNCTION_FAILED;
 }
 
-PKCS_API CK_RV C_SignMessageBegin(CK_SESSION_HANDLE /*hSession*/,
-	CK_VOID_PTR /*pParameter*/, CK_ULONG /*ulParameterLen*/)
+PKCS_API CK_RV C_SignMessageBegin(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	try
+	{
+		return SoftHSM::i()->C_SignMessageBegin(hSession, pParameter, ulParameterLen);
+	}
+	catch (...)
+	{
+		FatalException();
+	}
+	return CKR_FUNCTION_FAILED;
 }
 
-PKCS_API CK_RV C_SignMessageNext(CK_SESSION_HANDLE /*hSession*/,
-	CK_VOID_PTR /*pParameter*/, CK_ULONG /*ulParameterLen*/,
-	CK_BYTE_PTR /*pData*/, CK_ULONG /*ulDataLen*/,
-	CK_BYTE_PTR /*pSignature*/, CK_ULONG_PTR /*pulSignatureLen*/)
+PKCS_API CK_RV C_SignMessageNext(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen,
+	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+	CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	try
+	{
+		return SoftHSM::i()->C_SignMessageNext(hSession, pParameter, ulParameterLen,
+			pData, ulDataLen, pSignature, pulSignatureLen);
+	}
+	catch (...)
+	{
+		FatalException();
+	}
+	return CKR_FUNCTION_FAILED;
 }
 
 PKCS_API CK_RV C_MessageSignFinal(CK_SESSION_HANDLE hSession)
@@ -1624,18 +1641,35 @@ PKCS_API CK_RV C_VerifyMessage(CK_SESSION_HANDLE hSession,
 	return CKR_FUNCTION_FAILED;
 }
 
-PKCS_API CK_RV C_VerifyMessageBegin(CK_SESSION_HANDLE /*hSession*/,
-	CK_VOID_PTR /*pParameter*/, CK_ULONG /*ulParameterLen*/)
+PKCS_API CK_RV C_VerifyMessageBegin(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	try
+	{
+		return SoftHSM::i()->C_VerifyMessageBegin(hSession, pParameter, ulParameterLen);
+	}
+	catch (...)
+	{
+		FatalException();
+	}
+	return CKR_FUNCTION_FAILED;
 }
 
-PKCS_API CK_RV C_VerifyMessageNext(CK_SESSION_HANDLE /*hSession*/,
-	CK_VOID_PTR /*pParameter*/, CK_ULONG /*ulParameterLen*/,
-	CK_BYTE_PTR /*pData*/, CK_ULONG /*ulDataLen*/,
-	CK_BYTE_PTR /*pSignature*/, CK_ULONG /*ulSignatureLen*/)
+PKCS_API CK_RV C_VerifyMessageNext(CK_SESSION_HANDLE hSession,
+	CK_VOID_PTR pParameter, CK_ULONG ulParameterLen,
+	CK_BYTE_PTR pData, CK_ULONG ulDataLen,
+	CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	try
+	{
+		return SoftHSM::i()->C_VerifyMessageNext(hSession, pParameter, ulParameterLen,
+			pData, ulDataLen, pSignature, ulSignatureLen);
+	}
+	catch (...)
+	{
+		FatalException();
+	}
+	return CKR_FUNCTION_FAILED;
 }
 
 PKCS_API CK_RV C_MessageVerifyFinal(CK_SESSION_HANDLE hSession)
