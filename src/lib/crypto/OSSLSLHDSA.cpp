@@ -41,6 +41,176 @@
 #include <openssl/err.h>
 #include <string.h>
 
+// ─── Pre-hash support (FIPS 205 §10.1, HashSLH-DSA) ─────────────────────────
+
+// DER-encoded AlgorithmIdentifier for each hash (same OIDs as HashML-DSA).
+// SHA-2/SHA-3: SEQUENCE { OID, NULL }  (15 bytes)
+// SHAKE:       SEQUENCE { OID }        (13 bytes, absent parameters)
+static const unsigned char SLHDSA_ALGID_SHA224[]   = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x04, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA256[]   = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA384[]   = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA512[]   = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA3_224[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x07, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA3_256[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x08, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA3_384[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x09, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHA3_512[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0a, 0x05,0x00
+};
+static const unsigned char SLHDSA_ALGID_SHAKE128[] = {
+	0x30,0x0b, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0b
+};
+static const unsigned char SLHDSA_ALGID_SHAKE256[] = {
+	0x30,0x0b, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0c
+};
+
+struct SLHDSAPreHashInfo
+{
+	const char*           evpName;
+	const unsigned char*  algIdDer;
+	size_t                algIdDerLen;
+	size_t                digestLen;
+	bool                  isXof;
+	mutable EVP_MD*       md;  // lazily fetched and cached
+};
+
+static const SLHDSAPreHashInfo* getSLHDSAPreHashInfo(HashAlgo::Type hashAlg)
+{
+	// SHAKE output lengths per FIPS 205: SHAKE128 → 32 bytes, SHAKE256 → 64 bytes
+	static const SLHDSAPreHashInfo table[] = {
+		{ "SHA2-224",  SLHDSA_ALGID_SHA224,    15, 28, false, NULL },
+		{ "SHA2-256",  SLHDSA_ALGID_SHA256,    15, 32, false, NULL },
+		{ "SHA2-384",  SLHDSA_ALGID_SHA384,    15, 48, false, NULL },
+		{ "SHA2-512",  SLHDSA_ALGID_SHA512,    15, 64, false, NULL },
+		{ "SHA3-224",  SLHDSA_ALGID_SHA3_224,  15, 28, false, NULL },
+		{ "SHA3-256",  SLHDSA_ALGID_SHA3_256,  15, 32, false, NULL },
+		{ "SHA3-384",  SLHDSA_ALGID_SHA3_384,  15, 48, false, NULL },
+		{ "SHA3-512",  SLHDSA_ALGID_SHA3_512,  15, 64, false, NULL },
+		{ "SHAKE128",  SLHDSA_ALGID_SHAKE128,  13, 32, true,  NULL },
+		{ "SHAKE256",  SLHDSA_ALGID_SHAKE256,  13, 64, true,  NULL },
+	};
+
+	switch (hashAlg)
+	{
+		case HashAlgo::SHA224:   return &table[0];
+		case HashAlgo::SHA256:   return &table[1];
+		case HashAlgo::SHA384:   return &table[2];
+		case HashAlgo::SHA512:   return &table[3];
+		case HashAlgo::SHA3_224: return &table[4];
+		case HashAlgo::SHA3_256: return &table[5];
+		case HashAlgo::SHA3_384: return &table[6];
+		case HashAlgo::SHA3_512: return &table[7];
+		case HashAlgo::SHAKE128: return &table[8];
+		case HashAlgo::SHAKE256: return &table[9];
+		default: return NULL;
+	}
+}
+
+// Build HashSLH-DSA message: M' = 0x01 || len(ctx) || ctx || OID || PH(M)
+// per FIPS 205 §10.1
+static bool buildSLHDSAPreHashMsg(const ByteString& message,
+                                   const SLHDSA_SIGN_PARAMS* params,
+                                   ByteString& encoded)
+{
+	const SLHDSAPreHashInfo* info = getSLHDSAPreHashInfo(params->hashAlg);
+	if (!info)
+	{
+		ERROR_MSG("Unknown hash algorithm for pre-hash SLH-DSA");
+		return false;
+	}
+
+	// Hash the message. Lazily fetch and cache EVP_MD* (static lifetime, no free needed).
+	unsigned char digest[64];  // max: SHA-512 / SHAKE256 = 64 bytes
+	if (info->md == NULL)
+	{
+		info->md = EVP_MD_fetch(NULL, info->evpName, NULL);
+		if (info->md == NULL)
+		{
+			ERROR_MSG("EVP_MD_fetch(%s) failed", info->evpName);
+			return false;
+		}
+	}
+
+	if (info->isXof)
+	{
+		// SHAKE requires EVP_DigestFinalXOF for fixed-length output
+		EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+		if (!mdctx) return false;
+		bool ok = EVP_DigestInit_ex(mdctx, info->md, NULL) &&
+		          EVP_DigestUpdate(mdctx, message.const_byte_str(), message.size()) &&
+		          EVP_DigestFinalXOF(mdctx, digest, info->digestLen);
+		EVP_MD_CTX_free(mdctx);
+		if (!ok)
+		{
+			ERROR_MSG("SHAKE hash failed for pre-hash SLH-DSA");
+			return false;
+		}
+	}
+	else
+	{
+		unsigned int dLen = 0;
+		if (!EVP_Digest(message.const_byte_str(), message.size(),
+		                digest, &dLen, info->md, NULL))
+		{
+			ERROR_MSG("Hash failed for pre-hash SLH-DSA (%s)", info->evpName);
+			return false;
+		}
+	}
+
+	// Build M' = 0x01 || len(ctx) || ctx || AlgId_DER || H(M)
+	size_t totalLen = 1 + 1 + params->contextLen + info->algIdDerLen + info->digestLen;
+	encoded.resize(totalLen);
+	size_t off = 0;
+	encoded[off++] = 0x01;  // pre-hash domain separator (FIPS 205 §10.1)
+	encoded[off++] = (unsigned char)params->contextLen;
+	if (params->contextLen > 0)
+	{
+		memcpy(&encoded[off], params->context, params->contextLen);
+		off += params->contextLen;
+	}
+	memcpy(&encoded[off], info->algIdDer, info->algIdDerLen);
+	off += info->algIdDerLen;
+	memcpy(&encoded[off], digest, info->digestLen);
+
+	return true;
+}
+
+// Check if mechanism is a supported SLH-DSA family mechanism
+static bool isSLHDSAMechanism(AsymMech::Type mech)
+{
+	switch (mech)
+	{
+		case AsymMech::SLHDSA:
+		case AsymMech::HASH_SLHDSA:
+		case AsymMech::HASH_SLHDSA_SHA224:
+		case AsymMech::HASH_SLHDSA_SHA256:
+		case AsymMech::HASH_SLHDSA_SHA384:
+		case AsymMech::HASH_SLHDSA_SHA512:
+		case AsymMech::HASH_SLHDSA_SHA3_224:
+		case AsymMech::HASH_SLHDSA_SHA3_256:
+		case AsymMech::HASH_SLHDSA_SHA3_384:
+		case AsymMech::HASH_SLHDSA_SHA3_512:
+		case AsymMech::HASH_SLHDSA_SHAKE128:
+		case AsymMech::HASH_SLHDSA_SHAKE256:
+			return true;
+		default:
+			return false;
+	}
+}
+
 // Map CKP_SLH_DSA_* → OpenSSL name string (used only in generateKeyPair)
 static const char* slhdsaParamSetToName(CK_ULONG ps)
 {
@@ -66,9 +236,9 @@ static const char* slhdsaParamSetToName(CK_ULONG ps)
 
 bool OSSLSLHDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
                       ByteString& signature, const AsymMech::Type mechanism,
-                      const void* /* param */, const size_t /* paramLen */)
+                      const void* param, const size_t paramLen)
 {
-	if (mechanism != AsymMech::SLHDSA)
+	if (!isSLHDSAMechanism(mechanism))
 	{
 		ERROR_MSG("Invalid mechanism supplied (%i)", mechanism);
 		return false;
@@ -87,6 +257,28 @@ bool OSSLSLHDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 		return false;
 	}
 
+	// For pre-hash mechanisms: build M' = 0x01 || len(ctx) || ctx || OID || H(M)
+	const unsigned char* signData;
+	size_t signDataLen;
+	ByteString preHashMsg;
+
+	const SLHDSA_SIGN_PARAMS* slhdsaParams = NULL;
+	if (param != NULL && paramLen == sizeof(SLHDSA_SIGN_PARAMS))
+		slhdsaParams = (const SLHDSA_SIGN_PARAMS*)param;
+
+	if (slhdsaParams && slhdsaParams->preHash)
+	{
+		if (!buildSLHDSAPreHashMsg(dataToSign, slhdsaParams, preHashMsg))
+			return false;
+		signData    = preHashMsg.const_byte_str();
+		signDataLen = preHashMsg.size();
+	}
+	else
+	{
+		signData    = dataToSign.const_byte_str();
+		signDataLen = dataToSign.size();
+	}
+
 	size_t sigLen = pk->getOutputLength();
 	signature.resize(sigLen);
 
@@ -99,8 +291,7 @@ bool OSSLSLHDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 		EVP_MD_CTX_free(ctx);
 		return false;
 	}
-	if (!EVP_DigestSign(ctx, &signature[0], &sigLen,
-	                    dataToSign.const_byte_str(), dataToSign.size()))
+	if (!EVP_DigestSign(ctx, &signature[0], &sigLen, signData, signDataLen))
 	{
 		ERROR_MSG("SLH-DSA sign failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
@@ -134,9 +325,9 @@ bool OSSLSLHDSA::signFinal(ByteString& /*sig*/)
 
 bool OSSLSLHDSA::verify(PublicKey* publicKey, const ByteString& originalData,
                         const ByteString& signature, const AsymMech::Type mechanism,
-                        const void* /* param */, const size_t /* paramLen */)
+                        const void* param, const size_t paramLen)
 {
-	if (mechanism != AsymMech::SLHDSA)
+	if (!isSLHDSAMechanism(mechanism))
 	{
 		ERROR_MSG("Invalid mechanism supplied (%i)", mechanism);
 		return false;
@@ -155,6 +346,28 @@ bool OSSLSLHDSA::verify(PublicKey* publicKey, const ByteString& originalData,
 		return false;
 	}
 
+	// For pre-hash: rebuild M' and verify against that
+	const unsigned char* verifyData;
+	size_t verifyDataLen;
+	ByteString preHashMsg;
+
+	const SLHDSA_SIGN_PARAMS* slhdsaParams = NULL;
+	if (param != NULL && paramLen == sizeof(SLHDSA_SIGN_PARAMS))
+		slhdsaParams = (const SLHDSA_SIGN_PARAMS*)param;
+
+	if (slhdsaParams && slhdsaParams->preHash)
+	{
+		if (!buildSLHDSAPreHashMsg(originalData, slhdsaParams, preHashMsg))
+			return false;
+		verifyData    = preHashMsg.const_byte_str();
+		verifyDataLen = preHashMsg.size();
+	}
+	else
+	{
+		verifyData    = originalData.const_byte_str();
+		verifyDataLen = originalData.size();
+	}
+
 	EVP_MD_CTX* ctx = EVP_MD_CTX_new();
 	if (ctx == NULL) { ERROR_MSG("EVP_MD_CTX_new failed"); return false; }
 
@@ -166,7 +379,7 @@ bool OSSLSLHDSA::verify(PublicKey* publicKey, const ByteString& originalData,
 	}
 	int ret = EVP_DigestVerify(ctx,
 	                           signature.const_byte_str(), signature.size(),
-	                           originalData.const_byte_str(), originalData.size());
+	                           verifyData, verifyDataLen);
 	EVP_MD_CTX_free(ctx);
 	if (ret != 1)
 	{

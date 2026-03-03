@@ -109,7 +109,18 @@ struct AsymMech
 		HASH_MLDSA_SHA3_512,// CKM_HASH_ML_DSA_SHA3_512
 		HASH_MLDSA_SHAKE128,// CKM_HASH_ML_DSA_SHAKE128
 		HASH_MLDSA_SHAKE256,// CKM_HASH_ML_DSA_SHAKE256
-		SLHDSA              // CKM_SLH_DSA pure-message sign/verify (FIPS 205)
+		SLHDSA,              // CKM_SLH_DSA pure-message sign/verify (FIPS 205)
+		HASH_SLHDSA,         // CKM_HASH_SLH_DSA (generic, hash in param)
+		HASH_SLHDSA_SHA224,  // CKM_HASH_SLH_DSA_SHA224
+		HASH_SLHDSA_SHA256,  // CKM_HASH_SLH_DSA_SHA256
+		HASH_SLHDSA_SHA384,  // CKM_HASH_SLH_DSA_SHA384
+		HASH_SLHDSA_SHA512,  // CKM_HASH_SLH_DSA_SHA512
+		HASH_SLHDSA_SHA3_224,// CKM_HASH_SLH_DSA_SHA3_224
+		HASH_SLHDSA_SHA3_256,// CKM_HASH_SLH_DSA_SHA3_256
+		HASH_SLHDSA_SHA3_384,// CKM_HASH_SLH_DSA_SHA3_384
+		HASH_SLHDSA_SHA3_512,// CKM_HASH_SLH_DSA_SHA3_512
+		HASH_SLHDSA_SHAKE128,// CKM_HASH_SLH_DSA_SHAKE128
+		HASH_SLHDSA_SHAKE256 // CKM_HASH_SLH_DSA_SHAKE256
 	};
 };
 
@@ -143,6 +154,16 @@ struct MLDSA_SIGN_PARAMS
 	HashAlgo::Type hashAlg;      // hash algorithm (only when preHash=true)
 	size_t contextLen;           // 0-255
 	unsigned char context[255];  // FIPS 204 max context length
+};
+
+// SLH-DSA sign/verify parameters (PKCS#11 v3.2, FIPS 205)
+// Inline 255-byte context buffer avoids dangling pointers from Session::setParameters memcpy.
+struct SLHDSA_SIGN_PARAMS
+{
+	bool preHash;                // true for CKM_HASH_SLH_DSA_* mechanisms
+	HashAlgo::Type hashAlg;      // hash algorithm (only when preHash=true)
+	size_t contextLen;           // 0-255
+	unsigned char context[255];  // FIPS 205 max context length
 };
 
 class AsymmetricAlgorithm

@@ -33,7 +33,7 @@
  MacVerifyInit, AsymVerifyInit, C_VerifyInit, C_Verify, C_VerifyUpdate,
  C_VerifyFinal, multi-message stubs, C_VerifyRecoverInit, C_VerifyRecover,
  combined-operation stubs.  Static helpers: isMacMechanism, kMacMechTable,
- resolveMacMech, parseMLDSASignContext.
+ resolveMacMech, parseMLDSASignContext, parseSLHDSASignContext.
  *****************************************************************************/
 
 #include "config.h"
@@ -335,6 +335,82 @@ static CK_RV parseMLDSASignContext(CK_MECHANISM_PTR pMechanism, MLDSA_SIGN_PARAM
 	return CKR_OK;
 }
 
+// Parse CK_SIGN_ADDITIONAL_CONTEXT or CK_HASH_SIGN_ADDITIONAL_CONTEXT → SLHDSA_SIGN_PARAMS
+// SLH-DSA is always probabilistic; hedgeVariant is accepted but ignored.
+static CK_RV parseSLHDSASignContext(CK_MECHANISM_PTR pMechanism, SLHDSA_SIGN_PARAMS& out)
+{
+	memset(&out, 0, sizeof(out));
+	out.hashAlg = HashAlgo::Unknown;
+
+	if (pMechanism->pParameter == NULL_PTR || pMechanism->ulParameterLen == 0)
+	{
+		// No params → defaults: no context, pure mode
+		return CKR_OK;
+	}
+
+	bool isHashMech = (pMechanism->mechanism == CKM_HASH_SLH_DSA);
+
+	if (!isHashMech)
+	{
+		// CK_SIGN_ADDITIONAL_CONTEXT: hedgeVariant (ignored for SLH-DSA) + context
+		if (pMechanism->ulParameterLen != sizeof(CK_SIGN_ADDITIONAL_CONTEXT))
+		{
+			ERROR_MSG("Invalid SLH-DSA parameter size (%lu, expected %lu)",
+				pMechanism->ulParameterLen,
+				(unsigned long)sizeof(CK_SIGN_ADDITIONAL_CONTEXT));
+			return CKR_ARGUMENTS_BAD;
+		}
+		CK_SIGN_ADDITIONAL_CONTEXT* ctx =
+			(CK_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
+
+		if (ctx->ulContextLen > 255)
+		{
+			ERROR_MSG("SLH-DSA context string too long (%lu, max 255)",
+				ctx->ulContextLen);
+			return CKR_ARGUMENTS_BAD;
+		}
+		out.contextLen = ctx->ulContextLen;
+		if (ctx->ulContextLen > 0)
+		{
+			if (ctx->pContext == NULL_PTR)
+			{
+				ERROR_MSG("SLH-DSA context pointer is NULL with non-zero length");
+				return CKR_ARGUMENTS_BAD;
+			}
+			memcpy(out.context, ctx->pContext, ctx->ulContextLen);
+		}
+		out.preHash = false;
+	}
+	else
+	{
+		// CK_HASH_SIGN_ADDITIONAL_CONTEXT: hedgeVariant (ignored) + context + hash
+		if (pMechanism->ulParameterLen != sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT))
+		{
+			ERROR_MSG("Invalid HashSLH-DSA parameter size (%lu, expected %lu)",
+				pMechanism->ulParameterLen,
+				(unsigned long)sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT));
+			return CKR_ARGUMENTS_BAD;
+		}
+		CK_HASH_SIGN_ADDITIONAL_CONTEXT* ctx =
+			(CK_HASH_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
+
+		if (ctx->ulContextLen > 255)
+		{
+			ERROR_MSG("SLH-DSA context string too long (%lu)", ctx->ulContextLen);
+			return CKR_ARGUMENTS_BAD;
+		}
+		out.contextLen = ctx->ulContextLen;
+		if (ctx->ulContextLen > 0)
+		{
+			if (ctx->pContext == NULL_PTR) return CKR_ARGUMENTS_BAD;
+			memcpy(out.context, ctx->pContext, ctx->ulContextLen);
+		}
+		out.preHash = true;
+		// hash algorithm is set by the caller after this function returns
+	}
+	return CKR_OK;
+}
+
 // AsymmetricAlgorithm version of C_SignInit
 CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
@@ -357,6 +433,8 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 	RSA_PKCS_PSS_PARAMS pssParam;
 	MLDSA_SIGN_PARAMS mldsaSignParam;
 	memset(&mldsaSignParam, 0, sizeof(mldsaSignParam));
+	SLHDSA_SIGN_PARAMS slhdsaSignParam;
+	memset(&slhdsaSignParam, 0, sizeof(slhdsaSignParam));
 	bool bAllowMultiPartOp;
 	bool isRSA = false;
 #ifdef WITH_ECC
@@ -668,6 +746,65 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 			bAllowMultiPartOp = false;
 			isSLHDSA = true;
 			break;
+		case CKM_HASH_SLH_DSA:
+		{
+			if (pMechanism->pParameter == NULL_PTR ||
+			    pMechanism->ulParameterLen != sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT))
+			{
+				ERROR_MSG("CKM_HASH_SLH_DSA requires CK_HASH_SIGN_ADDITIONAL_CONTEXT");
+				return CKR_ARGUMENTS_BAD;
+			}
+			mechanism = AsymMech::HASH_SLHDSA;
+			bAllowMultiPartOp = false;
+			isSLHDSA = true;
+			CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam);
+			if (rv2 != CKR_OK) return rv2;
+			CK_HASH_SIGN_ADDITIONAL_CONTEXT* hctx =
+				(CK_HASH_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
+			switch (hctx->hash)
+			{
+				case CKM_SHA224:   slhdsaSignParam.hashAlg = HashAlgo::SHA224;   break;
+				case CKM_SHA256:   slhdsaSignParam.hashAlg = HashAlgo::SHA256;   break;
+				case CKM_SHA384:   slhdsaSignParam.hashAlg = HashAlgo::SHA384;   break;
+				case CKM_SHA512:   slhdsaSignParam.hashAlg = HashAlgo::SHA512;   break;
+				case CKM_SHA3_224: slhdsaSignParam.hashAlg = HashAlgo::SHA3_224; break;
+				case CKM_SHA3_256: slhdsaSignParam.hashAlg = HashAlgo::SHA3_256; break;
+				case CKM_SHA3_384: slhdsaSignParam.hashAlg = HashAlgo::SHA3_384; break;
+				case CKM_SHA3_512: slhdsaSignParam.hashAlg = HashAlgo::SHA3_512; break;
+				default:
+					ERROR_MSG("Unsupported hash 0x%08lx for CKM_HASH_SLH_DSA",
+					          hctx->hash);
+					return CKR_ARGUMENTS_BAD;
+			}
+			param = &slhdsaSignParam;
+			paramLen = sizeof(slhdsaSignParam);
+			break;
+		}
+#define HASH_SLHDSA_CASE(CKM_CONST, MECH_ENUM, HASH_ALGO) \
+		case CKM_CONST: \
+		{ \
+			mechanism = AsymMech::MECH_ENUM; \
+			bAllowMultiPartOp = false; \
+			isSLHDSA = true; \
+			CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam); \
+			if (rv2 != CKR_OK) return rv2; \
+			slhdsaSignParam.preHash = true; \
+			slhdsaSignParam.hashAlg = HashAlgo::HASH_ALGO; \
+			param = &slhdsaSignParam; \
+			paramLen = sizeof(slhdsaSignParam); \
+			break; \
+		}
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA224,   HASH_SLHDSA_SHA224,   SHA224)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA256,   HASH_SLHDSA_SHA256,   SHA256)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA384,   HASH_SLHDSA_SHA384,   SHA384)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA512,   HASH_SLHDSA_SHA512,   SHA512)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_224, HASH_SLHDSA_SHA3_224, SHA3_224)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_256, HASH_SLHDSA_SHA3_256, SHA3_256)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_384, HASH_SLHDSA_SHA3_384, SHA3_384)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_512, HASH_SLHDSA_SHA3_512, SHA3_512)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHAKE128, HASH_SLHDSA_SHAKE128, SHAKE128)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHAKE256, HASH_SLHDSA_SHAKE256, SHAKE256)
+#undef HASH_SLHDSA_CASE
 		default:
 			return CKR_MECHANISM_INVALID;
 	}
@@ -1290,6 +1427,8 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 	RSA_PKCS_PSS_PARAMS pssParam;
 	MLDSA_SIGN_PARAMS mldsaSignParam;
 	memset(&mldsaSignParam, 0, sizeof(mldsaSignParam));
+	SLHDSA_SIGN_PARAMS slhdsaSignParam;
+	memset(&slhdsaSignParam, 0, sizeof(slhdsaSignParam));
 	bool bAllowMultiPartOp;
 	bool isRSA = false;
 #ifdef WITH_ECC
@@ -1598,6 +1737,65 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 			bAllowMultiPartOp = false;
 			isSLHDSA = true;
 			break;
+		case CKM_HASH_SLH_DSA:
+		{
+			if (pMechanism->pParameter == NULL_PTR ||
+			    pMechanism->ulParameterLen != sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT))
+			{
+				ERROR_MSG("CKM_HASH_SLH_DSA requires CK_HASH_SIGN_ADDITIONAL_CONTEXT");
+				return CKR_ARGUMENTS_BAD;
+			}
+			mechanism = AsymMech::HASH_SLHDSA;
+			bAllowMultiPartOp = false;
+			isSLHDSA = true;
+			CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam);
+			if (rv2 != CKR_OK) return rv2;
+			CK_HASH_SIGN_ADDITIONAL_CONTEXT* hctx =
+				(CK_HASH_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
+			switch (hctx->hash)
+			{
+				case CKM_SHA224:   slhdsaSignParam.hashAlg = HashAlgo::SHA224;   break;
+				case CKM_SHA256:   slhdsaSignParam.hashAlg = HashAlgo::SHA256;   break;
+				case CKM_SHA384:   slhdsaSignParam.hashAlg = HashAlgo::SHA384;   break;
+				case CKM_SHA512:   slhdsaSignParam.hashAlg = HashAlgo::SHA512;   break;
+				case CKM_SHA3_224: slhdsaSignParam.hashAlg = HashAlgo::SHA3_224; break;
+				case CKM_SHA3_256: slhdsaSignParam.hashAlg = HashAlgo::SHA3_256; break;
+				case CKM_SHA3_384: slhdsaSignParam.hashAlg = HashAlgo::SHA3_384; break;
+				case CKM_SHA3_512: slhdsaSignParam.hashAlg = HashAlgo::SHA3_512; break;
+				default:
+					ERROR_MSG("Unsupported hash 0x%08lx for CKM_HASH_SLH_DSA",
+					          hctx->hash);
+					return CKR_ARGUMENTS_BAD;
+			}
+			param = &slhdsaSignParam;
+			paramLen = sizeof(slhdsaSignParam);
+			break;
+		}
+#define HASH_SLHDSA_CASE(CKM_CONST, MECH_ENUM, HASH_ALGO) \
+		case CKM_CONST: \
+		{ \
+			mechanism = AsymMech::MECH_ENUM; \
+			bAllowMultiPartOp = false; \
+			isSLHDSA = true; \
+			CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam); \
+			if (rv2 != CKR_OK) return rv2; \
+			slhdsaSignParam.preHash = true; \
+			slhdsaSignParam.hashAlg = HashAlgo::HASH_ALGO; \
+			param = &slhdsaSignParam; \
+			paramLen = sizeof(slhdsaSignParam); \
+			break; \
+		}
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA224,   HASH_SLHDSA_SHA224,   SHA224)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA256,   HASH_SLHDSA_SHA256,   SHA256)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA384,   HASH_SLHDSA_SHA384,   SHA384)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA512,   HASH_SLHDSA_SHA512,   SHA512)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_224, HASH_SLHDSA_SHA3_224, SHA3_224)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_256, HASH_SLHDSA_SHA3_256, SHA3_256)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_384, HASH_SLHDSA_SHA3_384, SHA3_384)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHA3_512, HASH_SLHDSA_SHA3_512, SHA3_512)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHAKE128, HASH_SLHDSA_SHAKE128, SHAKE128)
+		HASH_SLHDSA_CASE(CKM_HASH_SLH_DSA_SHAKE256, HASH_SLHDSA_SHAKE256, SHAKE256)
+#undef HASH_SLHDSA_CASE
 		default:
 			return CKR_MECHANISM_INVALID;
 	}
