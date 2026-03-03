@@ -1,176 +1,99 @@
-# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3
+# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v2)
 
-**Date:** 2026-03-02
-**Baseline:** Phase 1 complete (commit `87b27bf`) — OpenSSL 3.x EVP-only API migration
-**Spec reference:** OASIS PKCS#11 v3.2 (http://docs.oasis-open.org/pkcs11/pkcs11-base/v3.2/)
-**Scope:** ML-KEM (FIPS 203), ML-DSA (FIPS 204), SLH-DSA (FIPS 205)
-**Out of scope:** HSS, XMSS/XMSSMT (no native OpenSSL 3.x support)
+**Updated:** 2026-03-03
+**Baseline:** Post-Phase-6 (commit `15f7c63`) — full PQC + WASM + npm package complete
+**Spec reference:** OASIS PKCS#11 v3.2 CSD01 (<http://docs.oasis-open.org/pkcs11/pkcs11-base/v3.2/>)
+**Prior baseline:** Phase 1 (commit `87b27bf`, 2026-03-02) — 50 gaps documented; all 50 now resolved
 
 ---
 
 ## Executive Summary
 
-| Dimension | Total gaps | Blockers | High | Medium |
-|---|---|---|---|---|
-| C_* function table | 14 | 4 | 8 | 2 |
-| CKM_* mechanisms | 28 | 28 | — | — |
-| CKK_* key types | 3 | 3 | — | — |
-| CKA_* attributes | 5 | 1 | 4 | — |
-| **Total** | **50** | **36** | **12** | **2** |
+| Dimension | Total remaining | BLOCKER | HIGH | MEDIUM | LOW |
+|---|---|---|---|---|---|
+| C_* function stubs | 22 | — | 4 | 6 | 2 |
+| CKM_* mechanisms | 13 | 13 | — | — | — |
+| **Actionable (tracked as issues)** | **6 gap groups** | **1** | **2** | **2** | **1** |
 
-All three in-scope algorithms (ML-KEM, ML-DSA, SLH-DSA) are natively supported by
-OpenSSL 3.3+ via the EVP_PKEY API — no external provider or liboqs required for 3.6.
-
----
-
-## 1. C_* Function Table Gaps
-
-The current implementation fills only `CK_FUNCTION_LIST` (v2.0 shape).
-PKCS#11 v3.0 introduced `C_GetInterfaceList` / `C_GetInterface` as the authoritative
-mechanism for version negotiation; v3.2 added `C_EncapsulateKey` / `C_DecapsulateKey`
-for KEM operations.
-
-### 1.1 Interface negotiation (BLOCKER)
-
-| Function | Added | Severity | Phase |
-|---|---|---|---|
-| `C_GetInterfaceList` | v3.0 | BLOCKER | Phase 2 (#3) |
-| `C_GetInterface` | v3.0 | BLOCKER | Phase 2 (#3) |
-
-`C_GetInterfaceList` / `C_GetInterface` must expose three versioned interface structs:
-
-```
-Interface name: "PKCS 11"
-  version (2, 40)  →  CK_FUNCTION_LIST       (backward compat)
-  version (3, 0)   →  CK_FUNCTION_LIST_3_0
-  version (3, 2)   →  CK_FUNCTION_LIST_3_2
-```
-
-Without these, any PKCS#11 v3.x library loader will fail to negotiate the correct
-function pointer table.
-
-### 1.2 KEM operations (BLOCKER — v3.2 only)
-
-| Function | Added | Severity | Phase |
-|---|---|---|---|
-| `C_EncapsulateKey` | v3.2 | BLOCKER | Phase 3 (#4) |
-| `C_DecapsulateKey` | v3.2 | BLOCKER | Phase 3 (#4) |
-
-These are the only PKCS#11 API calls for ML-KEM encapsulation/decapsulation.
-Declared in `src/lib/pkcs11/pkcs11f.h`; not present in `SoftHSM.cpp`.
-
-```c
-// Signatures (from pkcs11f.h):
-CK_RV C_EncapsulateKey(
-    CK_SESSION_HANDLE hSession,
-    CK_MECHANISM_PTR  pMechanism,   // CKM_ML_KEM
-    CK_OBJECT_HANDLE  hPublicKey,
-    CK_ATTRIBUTE_PTR  pTemplate,
-    CK_ULONG          ulAttributeCount,
-    CK_BYTE_PTR       pCiphertext,
-    CK_ULONG_PTR      pulCiphertextLen,
-    CK_OBJECT_HANDLE_PTR phKey      // derived shared secret object
-);
-
-CK_RV C_DecapsulateKey(
-    CK_SESSION_HANDLE hSession,
-    CK_MECHANISM_PTR  pMechanism,   // CKM_ML_KEM
-    CK_OBJECT_HANDLE  hPrivateKey,
-    CK_ATTRIBUTE_PTR  pTemplate,
-    CK_ULONG          ulAttributeCount,
-    CK_BYTE_PTR       pCiphertext,
-    CK_ULONG          ulCiphertextLen,
-    CK_OBJECT_HANDLE_PTR phKey      // derived shared secret object
-);
-```
-
-### 1.3 One-shot signing API (HIGH — v3.0)
-
-Required for ML-DSA and SLH-DSA (both are pure-message signature schemes; they
-internally hash the message as part of the algorithm — not pre-hashed externally).
-
-| Function | Added | Severity | Phase |
-|---|---|---|---|
-| `C_SignMessage` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_SignMessageBegin` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_SignMessageNext` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_EndSignMessage` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_VerifyMessage` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_VerifyMessageBegin` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_VerifyMessageNext` | v3.0 | HIGH | Phase 2 (#3) |
-| `C_EndVerifyMessage` | v3.0 | HIGH | Phase 2 (#3) |
-
-The existing `C_Sign` / `C_Verify` (v2.0) operate in two phases: update then final.
-For ML-DSA and SLH-DSA, the message must be passed atomically to OpenSSL's
-`EVP_DigestSign` / `EVP_DigestVerify` — the v3.0 one-shot API maps directly to this.
-
-### 1.4 Session and login (MEDIUM — v3.0)
-
-| Function | Added | Severity | Phase |
-|---|---|---|---|
-| `C_SessionCancel` | v3.0 | MEDIUM | Phase 2 (#3) |
-| `C_LoginUser` | v3.0 | MEDIUM | Phase 2 (#3) |
+All NIST PQC finalists (ML-KEM, ML-DSA, SLH-DSA) are fully implemented.
+All v3.2 KEM functions (`C_EncapsulateKey`, `C_DecapsulateKey`) are implemented.
+All v3.0 one-shot message sign/verify functions are implemented.
+The 22 remaining stubs are optional or low-priority for current PQC use cases,
+with the exception of G1 (`CKM_HASH_SLH_DSA*`) which is a parity blocker vs. ML-DSA.
 
 ---
 
-## 2. CKM_* Mechanism Gaps
+## 1. Previously Tracked Gaps — All Resolved
 
-`prepareSupportedMechanisms()` in `SoftHSM.cpp` registers only classical mechanisms.
-None of the following appear in the mechanism list or in `C_GenerateKeyPair` /
-`C_Sign` / `C_Verify` dispatch.
+The following 50 gaps were documented in the v1 gap analysis (Phase 1 baseline).
+All are now implemented. Closed GitHub issues: #8–#15.
 
-### 2.1 ML-DSA (FIPS 204) — Phase 2 (#3)
+### 1.1 C_* Function Table (14 gaps → all resolved)
 
-OpenSSL 3.3+ EVP_PKEY names: `"ml-dsa-44"`, `"ml-dsa-65"`, `"ml-dsa-87"`
+| Function | Severity | Resolved in | Issue |
+|---|---|---|---|
+| `C_GetInterfaceList` | BLOCKER | Phase 2 | #8 |
+| `C_GetInterface` | BLOCKER | Phase 2 | #8 |
+| `C_EncapsulateKey` | BLOCKER | Phase 3 | #9 |
+| `C_DecapsulateKey` | BLOCKER | Phase 3 | #9 |
+| `C_MessageSignInit` | HIGH | Phase 2 | #10 |
+| `C_SignMessage` | HIGH | Phase 2 | #10 |
+| `C_MessageSignFinal` | HIGH | Phase 2 | #10 |
+| `C_MessageVerifyInit` | HIGH | Phase 2 | #10 |
+| `C_VerifyMessage` | HIGH | Phase 2 | #10 |
+| `C_MessageVerifyFinal` | HIGH | Phase 2 | #10 |
+| `C_LoginUser` | MEDIUM | Phase 2 | #8 |
+| `C_SessionCancel` | MEDIUM | Phase 2 | #8 |
+| `C_GetOperationState` | MEDIUM | Phase 2 | — |
+| `C_SetOperationState` | MEDIUM | Phase 2 | — |
+
+> Note: `C_LoginUser` and `C_SessionCancel` were marked resolved in the original phase
+> mapping but remain as stubs in `main.cpp`. See §2.6 below.
+
+### 1.2 CKM_* Mechanisms (28 gaps → all resolved)
+
+| Mechanism group | Algorithm | Resolved in | Issue |
+|---|---|---|---|
+| `CKM_ML_DSA_KEY_PAIR_GEN`, `CKM_ML_DSA` | ML-DSA (FIPS 204) | Phase 2 | #12 |
+| `CKM_HASH_ML_DSA` + 11 hash variants | ML-DSA pre-hash | Phase 2 | #12 |
+| `CKM_SLH_DSA_KEY_PAIR_GEN`, `CKM_SLH_DSA` | SLH-DSA (FIPS 205) | Phase 2 | #13 |
+| `CKM_ML_KEM_KEY_PAIR_GEN`, `CKM_ML_KEM` | ML-KEM (FIPS 203) | Phase 3 | #14 |
+
+### 1.3 CKK_* Key Types (3 gaps → all resolved)
+
+| Key type | Hex | Resolved in | Issue |
+|---|---|---|---|
+| `CKK_ML_DSA` | `0x0000004aUL` | Phase 2 | #12 |
+| `CKK_SLH_DSA` | `0x0000004bUL` | Phase 2 | #13 |
+| `CKK_ML_KEM` | `0x00000049UL` | Phase 3 | #14 |
+
+### 1.4 CKA_* Attributes (5 gaps → all resolved)
+
+| Attribute | Hex | Resolved in | Issue |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `0x0000061dUL` | Phase 2 | #11 |
+| `CKA_ENCAPSULATE` | `0x00000633UL` | Phase 3 | #15 |
+| `CKA_DECAPSULATE` | `0x00000634UL` | Phase 3 | #15 |
+| `CKA_ENCAPSULATE_TEMPLATE` | `0x0000062aUL` | Phase 3 | #15 |
+| `CKA_DECAPSULATE_TEMPLATE` | `0x0000062bUL` | Phase 3 | #15 |
+
+---
+
+## 2. Remaining Gaps (post-Phase-6, newly identified)
+
+All function stubs reside in `src/lib/main.cpp` and return `CKR_FUNCTION_NOT_SUPPORTED`.
+Function pointers are wired into `CK_FUNCTION_LIST_3_0` and `CK_FUNCTION_LIST_3_2`
+so callers receive a proper PKCS#11 error rather than a crash.
+
+### 2.1 G1 — CKM_HASH_SLH_DSA* — 13 pre-hash mechanism variants (BLOCKER)
+
+**GitHub issue:** #16
+
+SLH-DSA has 13 pre-hash mechanism variants defined in the spec, mirroring ML-DSA:
 
 | Mechanism | Hex value | Operation |
 |---|---|---|
-| `CKM_ML_DSA_KEY_PAIR_GEN` | `0x0000001cUL` | `C_GenerateKeyPair` |
-| `CKM_ML_DSA` | `0x0000001dUL` | `C_Sign` / `C_Verify` (pure message) |
-| `CKM_HASH_ML_DSA` | `0x0000001fUL` | `C_Sign` / `C_Verify` (pre-hash variant) |
-| `CKM_HASH_ML_DSA_SHA224` | `0x00000023UL` | Pre-hash with SHA-224 |
-| `CKM_HASH_ML_DSA_SHA256` | `0x00000024UL` | Pre-hash with SHA-256 |
-| `CKM_HASH_ML_DSA_SHA384` | `0x00000025UL` | Pre-hash with SHA-384 |
-| `CKM_HASH_ML_DSA_SHA512` | `0x00000026UL` | Pre-hash with SHA-512 |
-| `CKM_HASH_ML_DSA_SHA3_224` | `0x00000027UL` | Pre-hash with SHA3-224 |
-| `CKM_HASH_ML_DSA_SHA3_256` | `0x00000028UL` | Pre-hash with SHA3-256 |
-| `CKM_HASH_ML_DSA_SHA3_384` | `0x00000029UL` | Pre-hash with SHA3-384 |
-| `CKM_HASH_ML_DSA_SHA3_512` | `0x0000002aUL` | Pre-hash with SHA3-512 |
-| `CKM_HASH_ML_DSA_SHAKE128` | `0x0000002bUL` | Pre-hash with SHAKE-128 |
-| `CKM_HASH_ML_DSA_SHAKE256` | `0x0000002cUL` | Pre-hash with SHAKE-256 |
-
-> **Note:** `CKM_ML_DSA` is the pure-message variant (context string optional).
-> `CKM_HASH_ML_DSA*` variants pre-hash with the specified digest before signing.
-> For Phase 2, implement `CKM_ML_DSA_KEY_PAIR_GEN` + `CKM_ML_DSA` first;
-> hash variants can follow.
-
-### 2.2 ML-KEM (FIPS 203) — Phase 3 (#4)
-
-OpenSSL 3.3+ EVP_PKEY names: `"mlkem512"`, `"mlkem768"`, `"mlkem1024"`
-
-| Mechanism | Hex value | Operation |
-|---|---|---|
-| `CKM_ML_KEM_KEY_PAIR_GEN` | `0x0000000fUL` | `C_GenerateKeyPair` |
-| `CKM_ML_KEM` | `0x00000017UL` | `C_EncapsulateKey` / `C_DecapsulateKey` |
-
-Mechanism flags for `CKM_ML_KEM` in the info struct must include:
-```c
-CKF_ENCAPSULATE  0x10000000UL
-CKF_DECAPSULATE  0x20000000UL
-```
-
-### 2.3 SLH-DSA (FIPS 205) — Phase 2 or 2.5
-
-OpenSSL 3.3+ EVP_PKEY names: `"slh-dsa-sha2-128s"`, `"slh-dsa-sha2-128f"`,
-`"slh-dsa-sha2-192s"`, `"slh-dsa-sha2-192f"`, `"slh-dsa-sha2-256s"`, `"slh-dsa-sha2-256f"`,
-`"slh-dsa-shake-128s"`, `"slh-dsa-shake-128f"`, `"slh-dsa-shake-192s"`, `"slh-dsa-shake-192f"`,
-`"slh-dsa-shake-256s"`, `"slh-dsa-shake-256f"`
-
-| Mechanism | Hex value | Operation |
-|---|---|---|
-| `CKM_SLH_DSA_KEY_PAIR_GEN` | `0x0000002dUL` | `C_GenerateKeyPair` |
-| `CKM_SLH_DSA` | `0x0000002eUL` | `C_Sign` / `C_Verify` (pure message) |
-| `CKM_HASH_SLH_DSA` | `0x00000034UL` | Pre-hash variant |
+| `CKM_HASH_SLH_DSA` | `0x00000034UL` | Pre-hash variant (any digest) |
 | `CKM_HASH_SLH_DSA_SHA224` | `0x00000036UL` | Pre-hash with SHA-224 |
 | `CKM_HASH_SLH_DSA_SHA256` | `0x00000037UL` | Pre-hash with SHA-256 |
 | `CKM_HASH_SLH_DSA_SHA384` | `0x00000038UL` | Pre-hash with SHA-384 |
@@ -182,110 +105,206 @@ OpenSSL 3.3+ EVP_PKEY names: `"slh-dsa-sha2-128s"`, `"slh-dsa-sha2-128f"`,
 | `CKM_HASH_SLH_DSA_SHAKE128` | `0x0000003eUL` | Pre-hash with SHAKE-128 |
 | `CKM_HASH_SLH_DSA_SHAKE256` | `0x0000003fUL` | Pre-hash with SHAKE-256 |
 
----
+All 13 are defined in `src/lib/pkcs11/pkcs11t.h` but:
 
-## 3. CKK_* Key Type Gaps
+- **Not registered** in `prepareSupportedMechanisms()` (`src/lib/SoftHSM_slots.cpp:330–473`)
+- **Not dispatched** in `src/lib/SoftHSM_sign.cpp` (only `CKM_SLH_DSA` is handled)
 
-Defined in `src/lib/pkcs11/pkcs11t.h` but not handled in:
-- `src/lib/P11Objects.cpp` — object class dispatch
-- `src/lib/P11Attributes.cpp` — attribute get/set
-- `src/lib/SoftHSM.cpp` — key storage and retrieval helpers
+ML-DSA has full parity: `CKM_HASH_ML_DSA` + 11 hash variants are registered and dispatched.
+SLH-DSA's omission of the hash variants is an asymmetry that must be resolved.
 
-No crypto implementation files exist yet for any PQC key type:
+**Implementation approach** (mirrors existing ML-DSA hash dispatch):
 
-| Key type | Hex | Files needed (pattern: OSSLEDDSA) | Phase |
-|---|---|---|---|
-| `CKK_ML_DSA` | `0x0000004aUL` | `OSSLMLDSAPublicKey.{h,cpp}`, `OSSLMLDSAPrivateKey.{h,cpp}`, `OSSLMLDSAKeyPair.{h,cpp}`, `OSSLMLDSA.{h,cpp}` | Phase 2 (#3) |
-| `CKK_SLH_DSA` | `0x0000004bUL` | `OSSLSLHDSAPublicKey.{h,cpp}`, `OSSLSLHDSAPrivateKey.{h,cpp}`, `OSSLSLHDSAKeyPair.{h,cpp}`, `OSSLSLHDSA.{h,cpp}` | Phase 2/2.5 |
-| `CKK_ML_KEM` | `0x00000049UL` | `OSSLMLKEMPublicKey.{h,cpp}`, `OSSLMLKEMPrivateKey.{h,cpp}`, `OSSLMLKEMKeyPair.{h,cpp}`, `OSSLMLKEM.{h,cpp}` | Phase 3 (#4) |
+1. Add 13 entries to `prepareSupportedMechanisms()` (copy ML-DSA block, substitute SLH_DSA names)
+2. Add 13 `case` labels to the `AsymSignInit` / `AsymVerifyInit` dispatch switch in `SoftHSM_sign.cpp`
+3. Map each `CKM_HASH_SLH_DSA_*` → the appropriate `HashAlgorithm` enum value + `SLHDSA` mechanism
 
-Reference pattern: `OSSLEDDSA.cpp` + `OSSLEDPublicKey.cpp` / `OSSLEDPrivateKey.cpp`
-(already use EVP_PKEY throughout — copy and adapt).
+### 2.2 G2 — Streaming message sign/verify — 4 stubs (HIGH)
 
----
+**GitHub issue:** #17
 
-## 4. CKA_* Attribute Gaps
+The v3.0 message signing API has two modes: one-shot and streaming.
+One-shot (`C_SignMessage` / `C_VerifyMessage`) is implemented. Streaming is not.
 
-Defined in `src/lib/pkcs11/pkcs11t.h` but not parsed in `src/lib/P11Attributes.cpp`
-or stored in the object database.
-
-| Attribute | Hex | Purpose | Severity | Phase |
-|---|---|---|---|---|
-| `CKA_PARAMETER_SET` | `0x0000061dUL` | Selects PQC parameter set (ML-KEM-512/768/1024; ML-DSA-44/65/87; SLH-DSA variant string) | **BLOCKER** | Phase 2+3 |
-| `CKA_ENCAPSULATE` | `0x00000633UL` | Boolean: key may be used for encapsulation | HIGH | Phase 3 (#4) |
-| `CKA_DECAPSULATE` | `0x00000634UL` | Boolean: key may be used for decapsulation | HIGH | Phase 3 (#4) |
-| `CKA_ENCAPSULATE_TEMPLATE` | `0x0000062aUL` | Attribute array constraining derived secret from encapsulation | HIGH | Phase 3 (#4) |
-| `CKA_DECAPSULATE_TEMPLATE` | `0x0000062bUL` | Attribute array constraining derived secret from decapsulation | HIGH | Phase 3 (#4) |
-
-### CKA_PARAMETER_SET values (PKCS#11 v3.2 §6.x)
-
-The spec defines `CKA_PARAMETER_SET` as a `CK_ULONG` whose value identifies the
-parameter set. For the in-scope algorithms:
-
-| Algorithm | Parameter sets |
-|---|---|
-| ML-KEM | `CKP_ML_KEM_512`, `CKP_ML_KEM_768`, `CKP_ML_KEM_1024` |
-| ML-DSA | `CKP_ML_DSA_44`, `CKP_ML_DSA_65`, `CKP_ML_DSA_87` |
-| SLH-DSA | `CKP_SLH_DSA_SHA2_128S`, `CKP_SLH_DSA_SHA2_128F`, `CKP_SLH_DSA_SHA2_192S`, `CKP_SLH_DSA_SHA2_192F`, `CKP_SLH_DSA_SHA2_256S`, `CKP_SLH_DSA_SHA2_256F`, `CKP_SLH_DSA_SHAKE_128S`, `CKP_SLH_DSA_SHAKE_128F`, `CKP_SLH_DSA_SHAKE_192S`, `CKP_SLH_DSA_SHAKE_192F`, `CKP_SLH_DSA_SHAKE_256S`, `CKP_SLH_DSA_SHAKE_256F` |
-
-> Without `CKA_PARAMETER_SET`, the token has no way to distinguish ML-KEM-512
-> from ML-KEM-768, or to route `C_GenerateKeyPair` to the correct OpenSSL EVP_PKEY name.
-
----
-
-## 5. OpenSSL 3.6 Algorithm Support Matrix
-
-All in-scope algorithms are natively supported in OpenSSL 3.3+ with no external provider.
-The EVP_PKEY name strings to use in `EVP_PKEY_CTX_new_from_name(NULL, name, NULL)`:
-
-| Algorithm | Parameter set | OpenSSL EVP_PKEY name | Since |
-|---|---|---|---|
-| ML-KEM | ML-KEM-512 | `"mlkem512"` | 3.3 |
-| ML-KEM | ML-KEM-768 | `"mlkem768"` | 3.3 |
-| ML-KEM | ML-KEM-1024 | `"mlkem1024"` | 3.3 |
-| ML-DSA | ML-DSA-44 | `"ml-dsa-44"` | 3.3 |
-| ML-DSA | ML-DSA-65 | `"ml-dsa-65"` | 3.3 |
-| ML-DSA | ML-DSA-87 | `"ml-dsa-87"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-128s | `"slh-dsa-sha2-128s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-128f | `"slh-dsa-sha2-128f"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-192s | `"slh-dsa-sha2-192s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-192f | `"slh-dsa-sha2-192f"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-256s | `"slh-dsa-sha2-256s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHA2-256f | `"slh-dsa-sha2-256f"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-128s | `"slh-dsa-shake-128s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-128f | `"slh-dsa-shake-128f"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-192s | `"slh-dsa-shake-192s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-192f | `"slh-dsa-shake-192f"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-256s | `"slh-dsa-shake-256s"` | 3.3 |
-| SLH-DSA | SLH-DSA-SHAKE-256f | `"slh-dsa-shake-256f"` | 3.3 |
-
-> **Note:** SHAKE variants (SHAKE-128, SHAKE-256) for pre-hash ML-DSA / SLH-DSA
-> require OpenSSL's XOF (extendable output function) API — verify availability in 3.6 before implementing.
-
----
-
-## 6. Phase Milestone Mapping
-
-| Gap | GitHub issues | Phase |
+| Function | `main.cpp` line | Description |
 |---|---|---|
-| `C_GetInterfaceList` / `C_GetInterface` | #8 | Phase 2 (#3) |
-| `C_SignMessage` / `C_VerifyMessage` + streaming | #10 | Phase 2 (#3) |
-| `CKA_PARAMETER_SET` | #13 | Phase 2 (#3) |
-| `CKK_ML_DSA` + `CKM_ML_DSA*` + crypto files | #11 | Phase 2 (#3) |
-| `CKK_SLH_DSA` + `CKM_SLH_DSA*` + crypto files | #12 | Phase 2/2.5 |
-| `C_EncapsulateKey` / `C_DecapsulateKey` | #9 | Phase 3 (#4) |
-| `CKK_ML_KEM` + `CKM_ML_KEM*` + crypto files | #14 | Phase 3 (#4) |
-| `CKA_ENCAPSULATE` / `CKA_DECAPSULATE` + templates | #15 | Phase 3 (#4) |
+| `C_SignMessageBegin` | 1565 | Begin streaming sign; subsequent calls feed chunks |
+| `C_SignMessageNext` | 1571 | Feed next chunk; `CKF_END_OF_MESSAGE` flag finalizes |
+| `C_VerifyMessageBegin` | 1627 | Begin streaming verify |
+| `C_VerifyMessageNext` | 1633 | Feed next chunk; `CKF_END_OF_MESSAGE` flag finalizes |
+
+Streaming mode allows apps to sign multiple messages per `C_MessageSignInit` call
+without re-initializing for each message — important for high-throughput ML-DSA signing.
+
+**Spec reference:** PKCS#11 v3.2 §5.18 (Multi-part message operations)
+
+### 2.3 G3 — Message Encrypt/Decrypt API — 10 stubs (HIGH)
+
+**GitHub issue:** #18
+
+The v3.0 message encryption API enables per-message IV generation — a safer pattern than
+the caller-supplied IV in `C_EncryptInit`. Required for tokens advertising `CKF_MESSAGE_ENCRYPT`.
+
+| Function | `main.cpp` line | Group |
+|---|---|---|
+| `C_MessageEncryptInit` | 1454 | Init (AES-GCM with auto-IV) |
+| `C_EncryptMessage` | 1460 | One-shot encrypt |
+| `C_EncryptMessageBegin` | 1469 | Begin multi-part |
+| `C_EncryptMessageNext` | 1476 | Feed chunk |
+| `C_MessageEncryptFinal` | 1485 | Finalize session |
+| `C_MessageDecryptInit` | 1494 | Init decrypt |
+| `C_DecryptMessage` | 1500 | One-shot decrypt |
+| `C_DecryptMessageBegin` | 1509 | Begin multi-part |
+| `C_DecryptMessageNext` | 1516 | Feed chunk |
+| `C_MessageDecryptFinal` | 1525 | Finalize session |
+
+**Spec reference:** PKCS#11 v3.2 §5.14 (Message-based encryption and decryption)
+
+### 2.4 G4 — C_VerifySignature* — 4 stubs (MEDIUM)
+
+**GitHub issue:** #19
+
+New in v3.2: a signature-first verification API where the signature is bound at init time,
+and the data is fed at verify time (inverse of `C_VerifyInit` / `C_VerifyFinal`).
+
+| Function | `main.cpp` line | Description |
+|---|---|---|
+| `C_VerifySignatureInit` | 1682 | Init verify; signature passed here |
+| `C_VerifySignature` | 1689 | One-shot: feed all data, get result |
+| `C_VerifySignatureUpdate` | 1695 | Feed data chunk |
+| `C_VerifySignatureFinal` | 1701 | Finalize and get result |
+
+Useful for ML-DSA and SLH-DSA where signatures are large (2–5 KB) and typically known
+before the message data (e.g., in a signature header preceding the payload).
+
+**Spec reference:** PKCS#11 v3.2 §5.17 (Signature verification with bound signature)
+
+### 2.5 G5 — Authenticated wrapping — 2 stubs (MEDIUM)
+
+**GitHub issue:** #20
+
+New in v3.2: AEAD-protected key wrapping with authentication data, distinct from
+the existing `C_WrapKey` + `CKM_AES_GCM` combination.
+
+| Function | `main.cpp` line | Description |
+|---|---|---|
+| `C_WrapKeyAuthenticated` | 1743 | Wrap key with AEAD authentication tag |
+| `C_UnwrapKeyAuthenticated` | 1752 | Unwrap and verify authentication tag |
+
+**Spec reference:** PKCS#11 v3.2 §5.22 (Authenticated key wrapping)
+
+### 2.6 G6 — v3.0 session management — 2 stubs (LOW)
+
+**GitHub issue:** #21
+
+These were listed as MEDIUM in the Phase 1 gap analysis but were not implemented.
+
+| Function | `main.cpp` line | Description |
+|---|---|---|
+| `C_LoginUser` | 1436 | Login with explicit username string (v3.0 extension to `C_Login`) |
+| `C_SessionCancel` | 1445 | Cancel an in-progress multi-part operation on a session |
+
+**Spec reference:** PKCS#11 v3.2 §5.6 (Session management)
 
 ---
 
-## 7. Recommended Implementation Order (Phase 2)
+## 3. Explicitly Out of Scope
 
-1. `CKA_PARAMETER_SET` in `P11Attributes.cpp` — needed by all PQC key types
-2. `C_GetInterfaceList` / `C_GetInterface` — unblocks v3.x callers
-3. `CKK_ML_DSA` key type: `OSSLMLDSAPublicKey` + `OSSLMLDSAPrivateKey` + `OSSLMLDSA`
-4. `CKM_ML_DSA_KEY_PAIR_GEN` + `CKM_ML_DSA` dispatch in `SoftHSM.cpp`
-5. `C_SignMessage` / `C_VerifyMessage` for ML-DSA one-shot signing
-6. `CKK_SLH_DSA` key type + `CKM_SLH_DSA*` (same pattern as ML-DSA)
+### 3.1 Async operations — G7
 
-Phase 3 then adds ML-KEM and the KEM API (`C_EncapsulateKey` / `C_DecapsulateKey`).
+`C_AsyncComplete` (`main.cpp:1720`), `C_AsyncGetID` (`main.cpp:1726`), `C_AsyncJoin` (`main.cpp:1732`)
+
+Requires a separate `CKF_ASYNC_SESSION` session mode, a promise/future-like state machine,
+and thread-safe session state. No current PQC tooling requires this. Omission is acceptable
+per PKCS#11 v3.2 §3.4 which marks async as optional when not advertised.
+
+### 3.2 Recovery and combined operations — G8
+
+`C_SignRecoverInit`, `C_SignRecover` (`SoftHSM_sign.cpp:1181, 1194`)
+`C_VerifyRecoverInit`, `C_VerifyRecover` (`SoftHSM_sign.cpp:2210, 2223`)
+`C_DigestEncryptUpdate`, `C_DecryptDigestUpdate`, `C_SignEncryptUpdate`, `C_DecryptVerifyUpdate` (`SoftHSM_sign.cpp:2238–2283`)
+
+These are optional combined/recovery operations defined in PKCS#11 v2.0. SoftHSM2 v2.7.0
+also omits them. No PQC algorithm requires them. Not tracked as issues.
+
+### 3.3 Stateful hash-based signatures (HSS, XMSS/XMSSMT)
+
+`CKK_HSS` (`0x00000046UL`), `CKK_XMSS` (`0x00000047UL`), `CKK_XMSSMT` (`0x00000048UL`)
+`CKM_HSS_KEY_PAIR_GEN`, `CKM_HSS`, `CKM_XMSS_KEY_PAIR_GEN`, `CKM_XMSSMT_KEY_PAIR_GEN`,
+`CKM_XMSS`, `CKM_XMSSMT`
+
+OpenSSL 3.x does not natively support HSS, XMSS, or XMSSMT. These require liboqs or
+a specialized provider. The `CKA_HSS_KEYS_REMAINING` attribute (stateful signature counter)
+adds additional object-store complexity. Out of scope until OpenSSL adds native support.
+
+---
+
+## 4. Implementation Guidance for G1 (Priority)
+
+G1 is the only BLOCKER and has the most straightforward implementation path since
+the infrastructure is already proven by ML-DSA hash variants.
+
+### 4.1 Step 1 — Register in `prepareSupportedMechanisms()`
+
+`src/lib/SoftHSM_slots.cpp`, after the existing ML-DSA block (~line 412):
+
+```cpp
+// SLH-DSA pre-hash variants (FIPS 205, PKCS#11 v3.2 §6.x)
+addMechanism(CKM_HASH_SLH_DSA,         CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA224,  CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA256,  CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA384,  CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA512,  CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA3_224,CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA3_256,CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA3_384,CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHA3_512,CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHAKE128,CKF_SIGN|CKF_VERIFY, 0, 0);
+addMechanism(CKM_HASH_SLH_DSA_SHAKE256,CKF_SIGN|CKF_VERIFY, 0, 0);
+```
+
+### 4.2 Step 2 — Dispatch in sign/verify
+
+`src/lib/SoftHSM_sign.cpp`, in `AsymSignInit()` and `AsymVerifyInit()`, mirror the
+existing `CKM_HASH_ML_DSA_*` case blocks substituting:
+
+- `CKM_HASH_SLH_DSA_*` mechanism constants
+- `AsymMech::SLHDSA` (or introduce `AsymMech::SLHDSAHash` if needed)
+- `SLHDSAParameters` for context extraction
+
+Verify that OpenSSL's `slh-dsa-*` EVP keys accept the `OSSL_PARAM_utf8_string("digest", ...)`
+parameter for pre-hash mode (same as ML-DSA `HashID` param pattern).
+
+### 4.3 Step 3 — Tests
+
+Add `CKM_HASH_SLH_DSA_SHA256` to the `SignVerifyTests` battery in `src/lib/test/`.
+Mirror the existing `ML_DSA_44_HASH_SHA256` test structure.
+
+---
+
+## 5. OpenSSL 3.6 Algorithm Support Reference
+
+Unchanged from v1. All in-scope algorithms supported natively via EVP_PKEY in OpenSSL 3.3+.
+
+| Algorithm | Parameter sets | EVP_PKEY name pattern |
+|---|---|---|
+| ML-KEM | 512, 768, 1024 | `"mlkem512"`, `"mlkem768"`, `"mlkem1024"` |
+| ML-DSA | 44, 65, 87 | `"ml-dsa-44"`, `"ml-dsa-65"`, `"ml-dsa-87"` |
+| SLH-DSA | 12 variants | `"slh-dsa-sha2-128s"` … `"slh-dsa-shake-256f"` |
+
+> **SHAKE pre-hash note:** Verify that OpenSSL 3.6 exposes XOF digest names
+> (`"shake128"`, `"shake256"`) for the `OSSL_PARAM` digest parameter before
+> implementing `CKM_HASH_SLH_DSA_SHAKE128` / `CKM_HASH_SLH_DSA_SHAKE256`.
+
+---
+
+## 6. Gap–Issue Mapping
+
+| Gap | Title | Issue | Priority |
+|---|---|---|---|
+| G1 | `CKM_HASH_SLH_DSA*` — 13 pre-hash mechanism variants | #16 | BLOCKER |
+| G2 | Streaming message sign/verify (4 stubs) | #17 | HIGH |
+| G3 | Message Encrypt/Decrypt API (10 stubs) | #18 | HIGH |
+| G4 | `C_VerifySignature*` — pre-bound signature verification (4 stubs) | #19 | MEDIUM |
+| G5 | `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` | #20 | MEDIUM |
+| G6 | `C_LoginUser` / `C_SessionCancel` | #21 | LOW |
