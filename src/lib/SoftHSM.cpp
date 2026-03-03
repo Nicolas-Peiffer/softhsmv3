@@ -99,6 +99,33 @@
 #include <unistd.h>
 #endif
 
+// ---------------------------------------------------------------------------
+// Named constants — replaces raw magic numbers throughout this file (Md1).
+// ---------------------------------------------------------------------------
+namespace {
+
+/// Maximum ulMaxKeySize reported for mechanisms with no practical key-size limit.
+/// PKCS#11 v3.2 §7.1 — ulMaxKeySize of 0 means "unlimited" on some stacks but
+/// implementations typically use a large power-of-two; 2^31 matches upstream.
+static constexpr CK_ULONG UNLIMITED_KEY_SIZE       = 0x80000000UL;
+
+/// Hard cap on generic secret key byte length in C_GenerateKey.
+/// 128 MiB is an implementation-defined upper bound to prevent runaway allocation.
+static constexpr CK_ULONG MAX_GENERIC_KEY_LEN_BYTES = 0x8000000UL;
+
+/// Maximum HMAC key length in bytes reported in C_GetMechanismInfo.
+/// RFC 2104 permits any positive key length; 512 bytes (4096 bits) is a
+/// practical ceiling consistent with upstream SoftHSM2.
+static constexpr CK_ULONG MAX_HMAC_KEY_BYTES        = 512UL;
+
+/// Valid AES key lengths in bytes.
+static constexpr CK_ULONG AES_KEY_BYTES_128         = 16UL;  ///< AES-128
+static constexpr CK_ULONG AES_KEY_BYTES_192         = 24UL;  ///< AES-192
+static constexpr CK_ULONG AES_KEY_BYTES_256         = 32UL;  ///< AES-256
+
+} // anonymous namespace
+
+
 // Initialise the one-and-only instance
 
 #ifdef HAVE_CXX11
@@ -977,53 +1004,53 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 #ifndef WITH_FIPS
 		case CKM_MD5_HMAC:
 			pInfo->ulMinKeySize = 16;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 #endif
 		case CKM_SHA_1_HMAC:
 			pInfo->ulMinKeySize = 20;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA224_HMAC:
 			pInfo->ulMinKeySize = 28;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA256_HMAC:
 			pInfo->ulMinKeySize = 32;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA384_HMAC:
 			pInfo->ulMinKeySize = 48;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA512_HMAC:
 			pInfo->ulMinKeySize = 64;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA3_224_HMAC:
 			pInfo->ulMinKeySize = 28;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA3_256_HMAC:
 			pInfo->ulMinKeySize = 32;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA3_384_HMAC:
 			pInfo->ulMinKeySize = 48;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_SHA3_512_HMAC:
 			pInfo->ulMinKeySize = 64;
-			pInfo->ulMaxKeySize = 512;
+			pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;
 			break;
 		case CKM_RSA_PKCS_KEY_PAIR_GEN:
@@ -1068,7 +1095,7 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 			break;
 		case CKM_GENERIC_SECRET_KEY_GEN:
 			pInfo->ulMinKeySize = 1;
-			pInfo->ulMaxKeySize = 0x80000000;
+			pInfo->ulMaxKeySize = UNLIMITED_KEY_SIZE;
 			pInfo->flags = CKF_GENERATE;
 			break;
 		case CKM_AES_KEY_GEN:
@@ -1091,13 +1118,13 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 			break;
 		case CKM_AES_KEY_WRAP:
 			pInfo->ulMinKeySize = 16;
-			pInfo->ulMaxKeySize = 0x80000000;
+			pInfo->ulMaxKeySize = UNLIMITED_KEY_SIZE;
 			pInfo->flags = CKF_WRAP | CKF_UNWRAP;
 			break;
 #ifdef HAVE_AES_KEY_WRAP_PAD
 		case CKM_AES_KEY_WRAP_PAD:
 			pInfo->ulMinKeySize = 1;
-			pInfo->ulMaxKeySize = 0x80000000;
+			pInfo->ulMaxKeySize = UNLIMITED_KEY_SIZE;
 			pInfo->flags = CKF_WRAP | CKF_UNWRAP;
 			break;
 #endif
@@ -1209,7 +1236,7 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 	    case CKM_CONCATENATE_BASE_AND_DATA:
 	    case CKM_CONCATENATE_BASE_AND_KEY:
 	        pInfo->ulMinKeySize = 1;
-	        pInfo->ulMaxKeySize = 512;
+	        pInfo->ulMaxKeySize = MAX_HMAC_KEY_BYTES;
 	        pInfo->flags = CKF_DERIVE;
 	        break;
 		default:
@@ -6951,8 +6978,7 @@ CK_RV SoftHSM::UnwrapKeySym
 	SymAlgo::Type algo = SymAlgo::Unknown;
 	SymWrap::Type mode = SymWrap::Unknown;
 	size_t bb = 8;
-	size_t blocksize = 0;
-	
+
 	switch(pMechanism->mechanism) {
 #ifdef HAVE_AES_KEY_WRAP
 		case CKM_AES_KEY_WRAP:
@@ -6968,9 +6994,10 @@ CK_RV SoftHSM::UnwrapKeySym
 #endif
 	        case CKM_AES_CBC_PAD:
 			algo = SymAlgo::AES;
-			blocksize = 16;
+			// Block-size validation (multiples of AES_BLOCK_BYTES) was
+			// already enforced in C_UnwrapKey before this helper is called.
 			break;
-			
+
 		default:
 			return CKR_MECHANISM_INVALID;
 	}
@@ -7845,7 +7872,7 @@ CK_RV SoftHSM::generateGeneric
 	}
 
 	// Check keyLen
-	if (keyLen < 1 || keyLen > 0x8000000)
+	if (keyLen < 1 || keyLen > MAX_GENERIC_KEY_LEN_BYTES)
 	{
 		INFO_MSG("bad generic key length");
 		return CKR_ATTRIBUTE_VALUE_INVALID;
@@ -8018,7 +8045,7 @@ CK_RV SoftHSM::generateAES
 	}
 
 	// keyLen must be 16, 24, or 32
-	if (keyLen != 16 && keyLen != 24 && keyLen != 32)
+	if (keyLen != AES_KEY_BYTES_128 && keyLen != AES_KEY_BYTES_192 && keyLen != AES_KEY_BYTES_256)
 	{
 		INFO_MSG("bad AES key length");
 		return CKR_ATTRIBUTE_VALUE_INVALID;

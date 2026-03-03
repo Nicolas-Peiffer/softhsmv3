@@ -20,6 +20,26 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pkcs11t.h`, `cryptoki.h` to `<includedir>/softhsm/`
 - `cmake/modules/CompilerSanitizers.cmake` — `-DENABLE_ASAN=ON`,
   `-DENABLE_UBSAN=ON`, `-DENABLE_TSAN=ON` options for debug/CI builds
+- `Doxyfile.in` + CMake `docs` target: run `cmake --build build --target docs`
+  to generate HTML API reference in `build/docs/html/`; all public methods in
+  `SecureDataManager.h` carry `/** ... */` Doxygen docstrings (M5)
+- Coverage job in `.github/workflows/ci.yml`: gcov-instrumented build, lcov
+  capture with system/test path filtering, upload to Codecov via
+  `codecov/codecov-action@v4` (M6)
+
+### Changed
+
+- `src/lib/SoftHSM.cpp` — `MacSignInit` / `MacVerifyInit`: replaced 11-case
+  duplicate switch blocks with a shared `kMacMechTable[]` lookup array and
+  `resolveMacMech()` helper; reduces duplication and makes adding new HMAC/CMAC
+  mechanisms a one-line table entry (H3)
+- `src/lib/SoftHSM.cpp` — replaced six raw magic numbers with named constants
+  in anonymous namespace: `UNLIMITED_KEY_SIZE` (0x80000000), `MAX_GENERIC_KEY_LEN_BYTES`
+  (0x8000000), `MAX_HMAC_KEY_BYTES` (512), `AES_KEY_BYTES_128/192/256`
+  (16/24/32); zero compiler warnings after change (Md1)
+- `src/lib/SoftHSM.h` — replaced 12 concrete key-type `#include` headers with
+  forward declarations; reduces cascading recompilation when OSSL key headers
+  change (Md2)
 
 ### Fixed
 - **P0 — Integer underflow in `UnwrapMechRsaAesKw`** (`SoftHSM.cpp`): Added
