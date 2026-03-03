@@ -2466,6 +2466,31 @@ CK_RV P11AttrUnwrapTemplate::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK
 }
 
 /*****************************************
+ * CKA_PARAMETER_SET  (PKCS#11 v3.2)
+ *****************************************/
+
+// Set default value
+bool P11AttrParameterSet::setDefault()
+{
+	OSAttribute attr((unsigned long)CKK_VENDOR_DEFINED);
+	return osobject->setAttribute(type, attr);
+}
+
+// Update the value if allowed
+CK_RV P11AttrParameterSet::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	if (ulValueLen != sizeof(CK_ULONG))
+	{
+		return CKR_ATTRIBUTE_VALUE_INVALID;
+	}
+
+	// Store the parameter set value
+	OSAttribute attr(*(CK_ULONG*)pValue);
+	osobject->setAttribute(type, attr);
+	return CKR_OK;
+}
+
+/*****************************************
  * CKA_ALLOWED_MECHANISMS
  *****************************************/
 

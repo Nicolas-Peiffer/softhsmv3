@@ -1261,4 +1261,24 @@ protected:
 	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
 };
 
+/*****************************************
+ * CKA_PARAMETER_SET  (PKCS#11 v3.2)
+ * Selects PQC variant: ML-DSA-44/65/87,
+ * SLH-DSA-SHA2-128s … SLH-DSA-SHAKE-256f
+ *****************************************/
+
+class P11AttrParameterSet : public P11Attribute
+{
+public:
+	// Constructor
+	P11AttrParameterSet(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_PARAMETER_SET; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+
+protected:
+	// Set the default value of the attribute
+	virtual bool setDefault();
+
+	// Update the value if allowed
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
 #endif // !_SOFTHSM_V2_P11ATTRIBUTES_H

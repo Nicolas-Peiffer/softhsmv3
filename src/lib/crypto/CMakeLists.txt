@@ -30,6 +30,16 @@ set(SOURCES
     SymmetricAlgorithm.cpp
     SymmetricKey.cpp
 
+    # ML-DSA (FIPS 204) abstract bases and parameters
+    MLDSAPublicKey.cpp
+    MLDSAPrivateKey.cpp
+    MLDSAParameters.cpp
+
+    # SLH-DSA (FIPS 205) abstract bases and parameters
+    SLHDSAPublicKey.cpp
+    SLHDSAPrivateKey.cpp
+    SLHDSAParameters.cpp
+
     # OpenSSL EVP implementations
     OSSLAES.cpp
     OSSLCMAC.cpp
@@ -44,6 +54,14 @@ set(SOURCES
     OSSLEDKeyPair.cpp
     OSSLEDPrivateKey.cpp
     OSSLEDPublicKey.cpp
+    OSSLMLDSA.cpp
+    OSSLMLDSAKeyPair.cpp
+    OSSLMLDSAPrivateKey.cpp
+    OSSLMLDSAPublicKey.cpp
+    OSSLSLHDSA.cpp
+    OSSLSLHDSAKeyPair.cpp
+    OSSLSLHDSAPrivateKey.cpp
+    OSSLSLHDSAPublicKey.cpp
     OSSLEVPCMacAlgorithm.cpp
     OSSLEVPHashAlgorithm.cpp
     OSSLEVPMacAlgorithm.cpp

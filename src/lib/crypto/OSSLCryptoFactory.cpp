@@ -48,6 +48,8 @@
 #include "OSSLECDH.h"
 #include "OSSLECDSA.h"
 #include "OSSLEDDSA.h"
+#include "OSSLMLDSA.h"
+#include "OSSLSLHDSA.h"
 
 #include <string.h>
 #include <openssl/opensslv.h>
@@ -115,6 +117,10 @@ AsymmetricAlgorithm* OSSLCryptoFactory::getAsymmetricAlgorithm(AsymAlgo::Type al
 			return new OSSLECDSA();
 		case AsymAlgo::EDDSA:
 			return new OSSLEDDSA();
+		case AsymAlgo::MLDSA:
+			return new OSSLMLDSA();
+		case AsymAlgo::SLHDSA:
+			return new OSSLSLHDSA();
 		default:
 			break;
 	}

@@ -1901,3 +1901,179 @@ bool P11DHDomainObj::init(OSObject *inobject)
 	initialized = true;
 	return true;
 }
+
+// ─── ML-DSA Public Key (FIPS 204, PKCS#11 v3.2) ──────────────────────────────
+
+// Constructor
+P11MLDSAPublicKeyObj::P11MLDSAPublicKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11MLDSAPublicKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	if (!inobject->attributeExists(CKA_KEY_TYPE) || inobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_ML_DSA)
+	{
+		OSAttribute setKeyType((unsigned long)CKK_ML_DSA);
+		inobject->setAttribute(CKA_KEY_TYPE, setKeyType);
+	}
+
+	// Create parent
+	if (!P11PublicKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck3);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, 0);
+
+	// Initialize the attributes
+	if (!attrParamSet->init() || !attrValue->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrParamSet;
+		delete attrValue;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrParamSet->getType()] = attrParamSet;
+	attributes[attrValue->getType()]    = attrValue;
+
+	initialized = true;
+	return true;
+}
+
+// ─── ML-DSA Private Key (FIPS 204, PKCS#11 v3.2) ─────────────────────────────
+
+// Constructor
+P11MLDSAPrivateKeyObj::P11MLDSAPrivateKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11MLDSAPrivateKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	if (!inobject->attributeExists(CKA_KEY_TYPE) || inobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_ML_DSA)
+	{
+		OSAttribute setKeyType((unsigned long)CKK_ML_DSA);
+		inobject->setAttribute(CKA_KEY_TYPE, setKeyType);
+	}
+
+	// Create parent
+	if (!P11PrivateKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck4 | P11Attribute::ck6);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+
+	// Initialize the attributes
+	if (!attrParamSet->init() || !attrValue->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrParamSet;
+		delete attrValue;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrParamSet->getType()] = attrParamSet;
+	attributes[attrValue->getType()]    = attrValue;
+
+	initialized = true;
+	return true;
+}
+
+// ─── SLH-DSA Public Key (FIPS 205, PKCS#11 v3.2) ────────────────────────────
+
+// Constructor
+P11SLHDSAPublicKeyObj::P11SLHDSAPublicKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11SLHDSAPublicKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	if (!inobject->attributeExists(CKA_KEY_TYPE) || inobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_SLH_DSA)
+	{
+		OSAttribute setKeyType((unsigned long)CKK_SLH_DSA);
+		inobject->setAttribute(CKA_KEY_TYPE, setKeyType);
+	}
+
+	// Create parent
+	if (!P11PublicKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck3);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, 0);
+
+	// Initialize the attributes
+	if (!attrParamSet->init() || !attrValue->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrParamSet;
+		delete attrValue;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrParamSet->getType()] = attrParamSet;
+	attributes[attrValue->getType()]    = attrValue;
+
+	initialized = true;
+	return true;
+}
+
+// ─── SLH-DSA Private Key (FIPS 205, PKCS#11 v3.2) ───────────────────────────
+
+// Constructor
+P11SLHDSAPrivateKeyObj::P11SLHDSAPrivateKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11SLHDSAPrivateKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	if (!inobject->attributeExists(CKA_KEY_TYPE) || inobject->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_SLH_DSA)
+	{
+		OSAttribute setKeyType((unsigned long)CKK_SLH_DSA);
+		inobject->setAttribute(CKA_KEY_TYPE, setKeyType);
+	}
+
+	// Create parent
+	if (!P11PrivateKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck4 | P11Attribute::ck6);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+
+	// Initialize the attributes
+	if (!attrParamSet->init() || !attrValue->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrParamSet;
+		delete attrValue;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrParamSet->getType()] = attrParamSet;
+	attributes[attrValue->getType()]    = attrValue;
+
+	initialized = true;
+	return true;
+}

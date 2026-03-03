@@ -53,7 +53,9 @@ struct AsymAlgo
 		ECDH,
 		ECDSA,
 		GOST,
-		EDDSA
+		EDDSA,
+		MLDSA,    // ML-DSA (FIPS 204)
+		SLHDSA    // SLH-DSA (FIPS 205)
         };
 };
 
@@ -92,7 +94,9 @@ struct AsymMech
 		ECDSA_SHA512,
 		GOST,
 		GOST_GOST,
-		EDDSA
+		EDDSA,
+		MLDSA,    // CKM_ML_DSA pure-message sign/verify (FIPS 204)
+		SLHDSA    // CKM_SLH_DSA pure-message sign/verify (FIPS 205)
 	};
 };
 

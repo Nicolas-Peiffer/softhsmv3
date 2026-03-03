@@ -421,4 +421,60 @@ protected:
 	bool initialized;
 };
 
+// ─── ML-DSA (FIPS 204, PKCS#11 v3.2) ────────────────────────────────────────
+
+class P11MLDSAPublicKeyObj : public P11PublicKeyObj
+{
+public:
+	// Constructor
+	P11MLDSAPublicKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
+class P11MLDSAPrivateKeyObj : public P11PrivateKeyObj
+{
+public:
+	// Constructor
+	P11MLDSAPrivateKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
+// ─── SLH-DSA (FIPS 205, PKCS#11 v3.2) ───────────────────────────────────────
+
+class P11SLHDSAPublicKeyObj : public P11PublicKeyObj
+{
+public:
+	// Constructor
+	P11SLHDSAPublicKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
+class P11SLHDSAPrivateKeyObj : public P11PrivateKeyObj
+{
+public:
+	// Constructor
+	P11SLHDSAPrivateKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
 #endif // !_SOFTHSM_V2_P11OBJECTS_H
