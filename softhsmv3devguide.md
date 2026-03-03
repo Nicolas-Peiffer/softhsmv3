@@ -91,10 +91,16 @@ The table below lists functions that have changed status relative to SoftHSMv2:
 | `C_VerifyMessageBegin`     | **Implemented**| Commits per-message params; → MESSAGE_VERIFY_BEGIN state   |
 | `C_VerifyMessageNext`      | **Implemented**| Verifies one message                                       |
 | `C_MessageVerifyFinal`     | **Implemented**| Ends multi-message verify session                          |
-| `C_MessageEncryptInit`     | Stub → `CKR_FUNCTION_NOT_SUPPORTED` | Planned G3                  |
-| `C_EncryptMessage`         | Stub           | Planned G3                                                 |
-| `C_MessageDecryptInit`     | Stub           | Planned G3                                                 |
-| `C_DecryptMessage`         | Stub           | Planned G3                                                 |
+| `C_MessageEncryptInit`     | **Implemented**| AES-GCM per-message encrypt session                        |
+| `C_EncryptMessage`         | **Implemented**| One-shot AES-GCM encrypt (IV gen, AAD, tag output)         |
+| `C_EncryptMessageBegin`    | **Implemented**| Opens streaming AES-GCM encrypt; stores per-message IV     |
+| `C_EncryptMessageNext`     | **Implemented**| Streams plaintext parts; `CKF_END_OF_MESSAGE` finalises    |
+| `C_MessageEncryptFinal`    | **Implemented**| Ends multi-message encrypt session; frees key context      |
+| `C_MessageDecryptInit`     | **Implemented**| AES-GCM per-message decrypt session                        |
+| `C_DecryptMessage`         | **Implemented**| One-shot AES-GCM decrypt with auth tag verification        |
+| `C_DecryptMessageBegin`    | **Implemented**| Opens streaming AES-GCM decrypt; stores per-message IV     |
+| `C_DecryptMessageNext`     | **Implemented**| Streams ciphertext parts; `CKF_END_OF_MESSAGE` finalises   |
+| `C_MessageDecryptFinal`    | **Implemented**| Ends multi-message decrypt session; frees key context      |
 | `C_VerifySignatureInit`    | Stub           | Planned G4                                                 |
 | `C_VerifySignature`        | Stub           | Planned G4                                                 |
 | `C_WrapKeyAuthenticated`   | Stub           | Planned G5                                                 |
@@ -414,6 +420,118 @@ fn->C_DecapsulateKey(session, &mlkem_mech, hKemPriv,
 // Extract with C_GetAttributeValue(CKA_VALUE) or feed directly into a KDF.
 ```
 
+### 6.5 AES-GCM: per-message AEAD encrypt/decrypt
+
+The message encrypt API (`C_MessageEncryptInit` / `C_EncryptMessage` / `C_MessageEncryptFinal`)
+lets one AES key encrypt many messages, each with an independent IV, AAD, and auth tag.
+Only `CKM_AES_GCM` is supported.
+
+**Key generation**:
+
+```cpp
+CK_KEY_TYPE   aesType  = CKK_AES;
+CK_OBJECT_CLASS aesClass = CKO_SECRET_KEY;
+CK_ULONG      aesLen   = 32; // AES-256
+CK_BBOOL      ckTrue   = CK_TRUE;
+CK_BBOOL      ckFalse  = CK_FALSE;
+
+CK_ATTRIBUTE aesTmpl[] = {
+    { CKA_CLASS,     &aesClass, sizeof(aesClass) },
+    { CKA_KEY_TYPE,  &aesType,  sizeof(aesType)  },
+    { CKA_VALUE_LEN, &aesLen,   sizeof(aesLen)   },
+    { CKA_TOKEN,     &ckFalse,  sizeof(ckFalse)  },
+    { CKA_ENCRYPT,   &ckTrue,   sizeof(ckTrue)   },
+    { CKA_DECRYPT,   &ckTrue,   sizeof(ckTrue)   },
+};
+CK_MECHANISM aesGen = { CKM_AES_KEY_GEN, nullptr, 0 };
+CK_OBJECT_HANDLE hAes;
+fn->C_GenerateKey(session, &aesGen, aesTmpl,
+    sizeof(aesTmpl) / sizeof(CK_ATTRIBUTE), &hAes);
+```
+
+**One-shot per-message encrypt** (`C_EncryptMessage`):
+
+```cpp
+// Initialise a multi-message encrypt session
+CK_MECHANISM gcm_mech = { CKM_AES_GCM, nullptr, 0 };
+fn->C_MessageEncryptInit(session, &gcm_mech, hAes);
+
+// Per-message parameters: IV + AAD + output tag buffer
+uint8_t  iv[12]  = {};   // filled by softhsmv3 when CKG_GENERATE
+uint8_t  tag[16] = {};
+const uint8_t aad[]  = "request-id:42";
+const uint8_t plain[] = "hello authenticated world";
+uint8_t  cipher[sizeof(plain)];
+CK_ULONG cipherLen = sizeof(cipher);
+
+CK_GCM_MESSAGE_PARAMS param = {
+    iv,                    // pIv (output when generated)
+    sizeof(iv),            // ulIvLen
+    CKG_GENERATE,          // ivGenerator — softhsmv3 fills iv[] with random bytes
+    tag,                   // pTag (output)
+    sizeof(tag),           // ulTagLen
+};
+fn->C_EncryptMessage(session,
+    &param,  sizeof(param),
+    (CK_BYTE_PTR)aad, sizeof(aad) - 1,
+    (CK_BYTE_PTR)plain, sizeof(plain) - 1,
+    cipher, &cipherLen);
+// iv[] and tag[] are now populated; transmit (iv, cipher, tag, aad) to recipient.
+
+// Repeat C_EncryptMessage for additional messages with the same session.
+fn->C_MessageEncryptFinal(session);
+```
+
+**One-shot per-message decrypt** (`C_DecryptMessage`):
+
+```cpp
+fn->C_MessageDecryptInit(session, &gcm_mech, hAes);
+
+uint8_t recovered[sizeof(plain)];
+CK_ULONG recoveredLen = sizeof(recovered);
+
+CK_GCM_MESSAGE_PARAMS dparam = {
+    iv,         // pIv — the IV received from sender
+    sizeof(iv),
+    CKG_NO_GENERATE, // do not generate; use supplied IV
+    tag,        // pTag — the tag received from sender
+    sizeof(tag),
+};
+CK_RV rv = fn->C_DecryptMessage(session,
+    &dparam, sizeof(dparam),
+    (CK_BYTE_PTR)aad, sizeof(aad) - 1,
+    cipher, cipherLen,
+    recovered, &recoveredLen);
+// rv == CKR_OK → tag verified; recovered[] contains plaintext.
+// rv == CKR_FUNCTION_FAILED → authentication failure.
+
+fn->C_MessageDecryptFinal(session);
+```
+
+**Streaming encrypt** (`C_EncryptMessageBegin` / `C_EncryptMessageNext`):
+
+```cpp
+fn->C_MessageEncryptInit(session, &gcm_mech, hAes);
+
+CK_GCM_MESSAGE_PARAMS bp = { iv, sizeof(iv), CKG_GENERATE, tag, sizeof(tag) };
+fn->C_EncryptMessageBegin(session,
+    &bp, sizeof(bp),
+    (CK_BYTE_PTR)aad, sizeof(aad) - 1);
+
+// Stream plaintext in parts
+uint8_t part_out[64];
+CK_ULONG part_len = sizeof(part_out);
+fn->C_EncryptMessageNext(session, nullptr, 0,
+    plain_part1, len1, part_out, &part_len, 0 /* not last */);
+
+// Final part — CKF_END_OF_MESSAGE flushes GCM and writes the tag into bp.pTag
+fn->C_EncryptMessageNext(session, nullptr, 0,
+    plain_part2, len2, part_out, &part_len, CKF_END_OF_MESSAGE);
+// iv[] and tag[] (from bp) are now populated.
+
+fn->C_MessageEncryptFinal(session);
+```
+
 ---
 
 ## 7. Error Handling
@@ -426,7 +544,10 @@ softhsmv3 returns standard `CKR_*` codes. The behaviours below differ from gener
 | Call `C_SignMessage` when session is in SIGN_BEGIN state | `CKR_OPERATION_NOT_INITIALIZED`   |
 | Pass `pData == NULL` to `C_SignMessage` or `C_SignMessageNext` | `CKR_ARGUMENTS_BAD`         |
 | Pass `pulSignatureLen == NULL` to `C_SignMessageNext` | `CKR_ARGUMENTS_BAD`                 |
-| Call stub functions (G3–G6)                         | `CKR_FUNCTION_NOT_SUPPORTED`           |
+| Encrypt/decrypt message call in wrong op-type state | `CKR_OPERATION_NOT_INITIALIZED`        |
+| AES-GCM param with NULL IV pointer                  | `CKR_ARGUMENTS_BAD`                    |
+| AES-GCM auth-tag verification failure               | `CKR_FUNCTION_FAILED`                  |
+| Call stub functions (G4–G6)                         | `CKR_FUNCTION_NOT_SUPPORTED`           |
 | Call `C_SignRecover` / `C_DigestKey`                | `CKR_FUNCTION_NOT_SUPPORTED`           |
 | OpenSSL EVP operation failure                       | `CKR_FUNCTION_FAILED`                  |
 | `session->setParameters` heap allocation fails      | `CKR_HOST_MEMORY`                      |
@@ -453,6 +574,10 @@ SESSION_OP_MESSAGE_SIGN         0x11  — C_MessageSignInit active; accepts C_Si
 SESSION_OP_MESSAGE_VERIFY       0x12  — C_MessageVerifyInit active; accepts C_VerifyMessage / C_VerifyMessageBegin
 SESSION_OP_MESSAGE_SIGN_BEGIN   0x13  — C_SignMessageBegin committed; accepts C_SignMessageNext
 SESSION_OP_MESSAGE_VERIFY_BEGIN 0x14  — C_VerifyMessageBegin committed; accepts C_VerifyMessageNext
+SESSION_OP_MESSAGE_ENCRYPT      0x15  — C_MessageEncryptInit active; accepts C_EncryptMessage / C_EncryptMessageBegin
+SESSION_OP_MESSAGE_DECRYPT      0x16  — C_MessageDecryptInit active; accepts C_DecryptMessage / C_DecryptMessageBegin
+SESSION_OP_MESSAGE_ENCRYPT_BEGIN 0x17 — C_EncryptMessageBegin active; accepts C_EncryptMessageNext
+SESSION_OP_MESSAGE_DECRYPT_BEGIN 0x18 — C_DecryptMessageBegin active; accepts C_DecryptMessageNext
 ```
 
 Valid transitions:
@@ -464,9 +589,16 @@ C_MessageSignInit  → 0x11
     C_SignMessageNext(NULL, size query) → 0x13 (stays)
     C_SignMessageNext(buf,  real sign)  → 0x11 (back to message sign)
   C_MessageSignFinal → 0x0
+
+C_MessageEncryptInit → 0x15
+  C_EncryptMessage → 0x15 (stays; one-shot per message)
+  C_EncryptMessageBegin → 0x17
+    C_EncryptMessageNext(0)               → 0x17 (more parts)
+    C_EncryptMessageNext(CKF_END_OF_MESSAGE) → 0x15 (message done)
+  C_MessageEncryptFinal → 0x0
 ```
 
-The verify side is identical with `0x12` / `0x14`.
+The verify side is identical with `0x12` / `0x14`. The decrypt side mirrors encrypt with `0x16` / `0x18`.
 
 ---
 
