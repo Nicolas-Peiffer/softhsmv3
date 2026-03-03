@@ -28,6 +28,7 @@
  OSSLMLDSA.cpp
 
  OpenSSL ML-DSA (FIPS 204) asymmetric algorithm implementation
+ Supports: context string, hedging control, HashML-DSA pre-hash (PKCS#11 v3.2)
  *****************************************************************************/
 
 #include "config.h"
@@ -39,15 +40,186 @@
 #include "OSSLMLDSAPrivateKey.h"
 #include <openssl/evp.h>
 #include <openssl/err.h>
+#include <openssl/core_names.h>
+#include <openssl/params.h>
 #include <string.h>
 
-// ─── Signing ─────────────────────────────────────────────────────────────────
+// ─── Pre-hash support (FIPS 204 §5.4, HashML-DSA) ──────────────────────────
+
+struct PreHashInfo
+{
+	const char* evpName;
+	const unsigned char* algIdDer;
+	size_t algIdDerLen;
+	size_t digestLen;
+	bool isXof;
+};
+
+// DER-encoded AlgorithmIdentifier for each hash: SEQUENCE { OID [, NULL] }
+// SHA-2/SHA-3: SEQUENCE { OID, NULL }  (15 bytes)
+// SHAKE:       SEQUENCE { OID }        (13 bytes, absent parameters)
+static const unsigned char ALGID_SHA224[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x04, 0x05,0x00
+};
+static const unsigned char ALGID_SHA256[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01, 0x05,0x00
+};
+static const unsigned char ALGID_SHA384[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02, 0x05,0x00
+};
+static const unsigned char ALGID_SHA512[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03, 0x05,0x00
+};
+static const unsigned char ALGID_SHA3_224[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x07, 0x05,0x00
+};
+static const unsigned char ALGID_SHA3_256[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x08, 0x05,0x00
+};
+static const unsigned char ALGID_SHA3_384[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x09, 0x05,0x00
+};
+static const unsigned char ALGID_SHA3_512[] = {
+	0x30,0x0d, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0a, 0x05,0x00
+};
+static const unsigned char ALGID_SHAKE128[] = {
+	0x30,0x0b, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0b
+};
+static const unsigned char ALGID_SHAKE256[] = {
+	0x30,0x0b, 0x06,0x09, 0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x0c
+};
+
+static const PreHashInfo* getPreHashInfo(HashAlgo::Type hashAlg)
+{
+	// SHAKE output lengths per FIPS 204: SHAKE128 → 32 bytes, SHAKE256 → 64 bytes
+	static const PreHashInfo table[] = {
+		{ "SHA2-224",  ALGID_SHA224,    15, 28, false },
+		{ "SHA2-256",  ALGID_SHA256,    15, 32, false },
+		{ "SHA2-384",  ALGID_SHA384,    15, 48, false },
+		{ "SHA2-512",  ALGID_SHA512,    15, 64, false },
+		{ "SHA3-224",  ALGID_SHA3_224,  15, 28, false },
+		{ "SHA3-256",  ALGID_SHA3_256,  15, 32, false },
+		{ "SHA3-384",  ALGID_SHA3_384,  15, 48, false },
+		{ "SHA3-512",  ALGID_SHA3_512,  15, 64, false },
+		{ "SHAKE128",  ALGID_SHAKE128,  13, 32, true  },
+		{ "SHAKE256",  ALGID_SHAKE256,  13, 64, true  },
+	};
+
+	switch (hashAlg)
+	{
+		case HashAlgo::SHA224:   return &table[0];
+		case HashAlgo::SHA256:   return &table[1];
+		case HashAlgo::SHA384:   return &table[2];
+		case HashAlgo::SHA512:   return &table[3];
+		case HashAlgo::SHA3_224: return &table[4];
+		case HashAlgo::SHA3_256: return &table[5];
+		case HashAlgo::SHA3_384: return &table[6];
+		case HashAlgo::SHA3_512: return &table[7];
+		case HashAlgo::SHAKE128: return &table[8];
+		case HashAlgo::SHAKE256: return &table[9];
+		default: return NULL;
+	}
+}
+
+// Build HashML-DSA encoding: M' = 0x01 || len(ctx) || ctx || OID || PH(M)
+// per FIPS 204 §5.4
+static bool buildPreHashEncoding(const ByteString& message,
+                                 const MLDSA_SIGN_PARAMS* params,
+                                 ByteString& encoded)
+{
+	const PreHashInfo* info = getPreHashInfo(params->hashAlg);
+	if (!info)
+	{
+		ERROR_MSG("Unknown hash algorithm for pre-hash ML-DSA");
+		return false;
+	}
+
+	// Hash the message with the specified algorithm
+	unsigned char digest[64]; // max: SHA-512 / SHAKE256 = 64 bytes
+	EVP_MD* md = EVP_MD_fetch(NULL, info->evpName, NULL);
+	if (!md)
+	{
+		ERROR_MSG("EVP_MD_fetch(%s) failed", info->evpName);
+		return false;
+	}
+
+	if (info->isXof)
+	{
+		// SHAKE requires EVP_DigestFinalXOF for fixed-length output
+		EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+		if (!mdctx) { EVP_MD_free(md); return false; }
+		bool ok = EVP_DigestInit_ex(mdctx, md, NULL) &&
+		          EVP_DigestUpdate(mdctx, message.const_byte_str(), message.size()) &&
+		          EVP_DigestFinalXOF(mdctx, digest, info->digestLen);
+		EVP_MD_CTX_free(mdctx);
+		EVP_MD_free(md);
+		if (!ok)
+		{
+			ERROR_MSG("SHAKE hash failed for pre-hash ML-DSA");
+			return false;
+		}
+	}
+	else
+	{
+		unsigned int dLen = 0;
+		if (!EVP_Digest(message.const_byte_str(), message.size(),
+		                digest, &dLen, md, NULL))
+		{
+			ERROR_MSG("Hash failed for pre-hash ML-DSA (%s)", info->evpName);
+			EVP_MD_free(md);
+			return false;
+		}
+		EVP_MD_free(md);
+	}
+
+	// Build M' = 0x01 || contextLen || context || AlgId_DER || H(M)
+	size_t totalLen = 1 + 1 + params->contextLen + info->algIdDerLen + info->digestLen;
+	encoded.resize(totalLen);
+	size_t off = 0;
+	encoded[off++] = 0x01;  // pre-hash domain separator
+	encoded[off++] = (unsigned char)params->contextLen;
+	if (params->contextLen > 0)
+	{
+		memcpy(&encoded[off], params->context, params->contextLen);
+		off += params->contextLen;
+	}
+	memcpy(&encoded[off], info->algIdDer, info->algIdDerLen);
+	off += info->algIdDerLen;
+	memcpy(&encoded[off], digest, info->digestLen);
+
+	return true;
+}
+
+// Check if mechanism is an ML-DSA family mechanism
+static bool isMLDSAMechanism(AsymMech::Type mech)
+{
+	switch (mech)
+	{
+		case AsymMech::MLDSA:
+		case AsymMech::HASH_MLDSA:
+		case AsymMech::HASH_MLDSA_SHA224:
+		case AsymMech::HASH_MLDSA_SHA256:
+		case AsymMech::HASH_MLDSA_SHA384:
+		case AsymMech::HASH_MLDSA_SHA512:
+		case AsymMech::HASH_MLDSA_SHA3_224:
+		case AsymMech::HASH_MLDSA_SHA3_256:
+		case AsymMech::HASH_MLDSA_SHA3_384:
+		case AsymMech::HASH_MLDSA_SHA3_512:
+		case AsymMech::HASH_MLDSA_SHAKE128:
+		case AsymMech::HASH_MLDSA_SHAKE256:
+			return true;
+		default:
+			return false;
+	}
+}
+
+// ─── Signing ────────────────────────────────────────────────────────────────
 
 bool OSSLMLDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
                      ByteString& signature, const AsymMech::Type mechanism,
-                     const void* /* param */, const size_t /* paramLen */)
+                     const void* param, const size_t paramLen)
 {
-	if (mechanism != AsymMech::MLDSA)
+	if (!isMLDSAMechanism(mechanism))
 	{
 		ERROR_MSG("Invalid mechanism supplied (%i)", mechanism);
 		return false;
@@ -66,6 +238,31 @@ bool OSSLMLDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 		return false;
 	}
 
+	// Parse ML-DSA parameters (context string, hedging, pre-hash)
+	const MLDSA_SIGN_PARAMS* mldsaParams = NULL;
+	if (param != NULL && paramLen == sizeof(MLDSA_SIGN_PARAMS))
+		mldsaParams = (const MLDSA_SIGN_PARAMS*)param;
+
+	// For pre-hash mechanisms: hash message and build encoded M'
+	const unsigned char* signData;
+	size_t signDataLen;
+	ByteString preHashEncoded;
+	bool useRawEncoding = false;
+
+	if (mldsaParams && mldsaParams->preHash)
+	{
+		if (!buildPreHashEncoding(dataToSign, mldsaParams, preHashEncoded))
+			return false;
+		signData = preHashEncoded.const_byte_str();
+		signDataLen = preHashEncoded.size();
+		useRawEncoding = true;
+	}
+	else
+	{
+		signData = dataToSign.const_byte_str();
+		signDataLen = dataToSign.size();
+	}
+
 	// Pre-size the output buffer to the maximum signature length
 	size_t sigLen = pk->getOutputLength();
 	signature.resize(sigLen);
@@ -76,14 +273,62 @@ bool OSSLMLDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 		ERROR_MSG("EVP_MD_CTX_new failed");
 		return false;
 	}
-	if (!EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey))
+
+	// Capture EVP_PKEY_CTX to set signature parameters
+	EVP_PKEY_CTX* pkeyCtx = NULL;
+	if (!EVP_DigestSignInit(ctx, &pkeyCtx, NULL, NULL, pkey))
 	{
 		ERROR_MSG("ML-DSA sign init failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
 		return false;
 	}
-	if (!EVP_DigestSign(ctx, &signature[0], &sigLen,
-	                    dataToSign.const_byte_str(), dataToSign.size()))
+
+	// Set OpenSSL signature parameters (context, hedging, encoding mode)
+	if (mldsaParams)
+	{
+		OSSL_PARAM osslParams[4];  // max 3 params + terminator
+		int nParams = 0;
+		int deterministic = 0;
+		int msgEncoding = 1;  // 1 = pure message (default)
+
+		// Hedging control: CKH_DETERMINISTIC_REQUIRED → set deterministic=1
+		if (mldsaParams->deterministic)
+		{
+			deterministic = 1;
+			osslParams[nParams++] = OSSL_PARAM_construct_int(
+				OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic);
+		}
+
+		// Context string — only for pure ML-DSA (pre-hash embeds context in M')
+		if (mldsaParams->contextLen > 0 && !useRawEncoding)
+		{
+			osslParams[nParams++] = OSSL_PARAM_construct_octet_string(
+				OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+				(void*)mldsaParams->context, mldsaParams->contextLen);
+		}
+
+		// Pre-hash: tell OpenSSL input is already pre-encoded M'
+		if (useRawEncoding)
+		{
+			msgEncoding = 0;  // 0 = raw / pre-encoded
+			osslParams[nParams++] = OSSL_PARAM_construct_int(
+				OSSL_SIGNATURE_PARAM_MESSAGE_ENCODING, &msgEncoding);
+		}
+
+		if (nParams > 0)
+		{
+			osslParams[nParams] = OSSL_PARAM_construct_end();
+			if (!EVP_PKEY_CTX_set_params(pkeyCtx, osslParams))
+			{
+				ERROR_MSG("Failed to set ML-DSA sign params (0x%08X)",
+				          ERR_get_error());
+				EVP_MD_CTX_free(ctx);
+				return false;
+			}
+		}
+	}
+
+	if (!EVP_DigestSign(ctx, &signature[0], &sigLen, signData, signDataLen))
 	{
 		ERROR_MSG("ML-DSA sign failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
@@ -117,9 +362,9 @@ bool OSSLMLDSA::signFinal(ByteString& /*sig*/)
 
 bool OSSLMLDSA::verify(PublicKey* publicKey, const ByteString& originalData,
                        const ByteString& signature, const AsymMech::Type mechanism,
-                       const void* /* param */, const size_t /* paramLen */)
+                       const void* param, const size_t paramLen)
 {
-	if (mechanism != AsymMech::MLDSA)
+	if (!isMLDSAMechanism(mechanism))
 	{
 		ERROR_MSG("Invalid mechanism supplied (%i)", mechanism);
 		return false;
@@ -138,21 +383,87 @@ bool OSSLMLDSA::verify(PublicKey* publicKey, const ByteString& originalData,
 		return false;
 	}
 
+	// Parse ML-DSA parameters
+	const MLDSA_SIGN_PARAMS* mldsaParams = NULL;
+	if (param != NULL && paramLen == sizeof(MLDSA_SIGN_PARAMS))
+		mldsaParams = (const MLDSA_SIGN_PARAMS*)param;
+
+	// For pre-hash mechanisms: hash message and build encoded M'
+	const unsigned char* verifyData;
+	size_t verifyDataLen;
+	ByteString preHashEncoded;
+	bool useRawEncoding = false;
+
+	if (mldsaParams && mldsaParams->preHash)
+	{
+		if (!buildPreHashEncoding(originalData, mldsaParams, preHashEncoded))
+			return false;
+		verifyData = preHashEncoded.const_byte_str();
+		verifyDataLen = preHashEncoded.size();
+		useRawEncoding = true;
+	}
+	else
+	{
+		verifyData = originalData.const_byte_str();
+		verifyDataLen = originalData.size();
+	}
+
 	EVP_MD_CTX* ctx = EVP_MD_CTX_new();
 	if (ctx == NULL)
 	{
 		ERROR_MSG("EVP_MD_CTX_new failed");
 		return false;
 	}
-	if (!EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey))
+
+	// Capture EVP_PKEY_CTX to set signature parameters
+	EVP_PKEY_CTX* pkeyCtx = NULL;
+	if (!EVP_DigestVerifyInit(ctx, &pkeyCtx, NULL, NULL, pkey))
 	{
 		ERROR_MSG("ML-DSA verify init failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
 		return false;
 	}
+
+	// Set OpenSSL signature parameters (context, encoding mode)
+	// Note: deterministic flag is irrelevant for verification
+	if (mldsaParams)
+	{
+		OSSL_PARAM osslParams[3];  // max 2 params + terminator
+		int nParams = 0;
+		int msgEncoding = 1;
+
+		// Context string — only for pure ML-DSA
+		if (mldsaParams->contextLen > 0 && !useRawEncoding)
+		{
+			osslParams[nParams++] = OSSL_PARAM_construct_octet_string(
+				OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+				(void*)mldsaParams->context, mldsaParams->contextLen);
+		}
+
+		// Pre-hash: raw M'
+		if (useRawEncoding)
+		{
+			msgEncoding = 0;
+			osslParams[nParams++] = OSSL_PARAM_construct_int(
+				OSSL_SIGNATURE_PARAM_MESSAGE_ENCODING, &msgEncoding);
+		}
+
+		if (nParams > 0)
+		{
+			osslParams[nParams] = OSSL_PARAM_construct_end();
+			if (!EVP_PKEY_CTX_set_params(pkeyCtx, osslParams))
+			{
+				ERROR_MSG("Failed to set ML-DSA verify params (0x%08X)",
+				          ERR_get_error());
+				EVP_MD_CTX_free(ctx);
+				return false;
+			}
+		}
+	}
+
 	int ret = EVP_DigestVerify(ctx,
 	                           signature.const_byte_str(), signature.size(),
-	                           originalData.const_byte_str(), originalData.size());
+	                           verifyData, verifyDataLen);
 	EVP_MD_CTX_free(ctx);
 	if (ret != 1)
 	{
