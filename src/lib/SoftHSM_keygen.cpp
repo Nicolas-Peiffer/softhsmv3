@@ -1552,6 +1552,306 @@ CK_RV SoftHSM::C_UnwrapKey
 	return rv;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// G5: PKCS#11 v3.2 authenticated key wrap / unwrap (CKM_AES_GCM only)
+//
+// Identical to C_WrapKey / C_UnwrapKey except:
+//   • an additional pAssociatedData / ulAssociatedDataLen parameter is
+//     authenticated (but not encrypted) by the AEAD mechanism
+//   • only CKM_AES_GCM is supported (AES-KW does not provide native AAD)
+//   • wrapped format: ciphertext ‖ tag  (tag length = ulTagBits/8)
+//
+// AES secret key wrapping only; private key wrapping is not supported
+// (add PKCS8Encode / setXXXPrivateKey paths to extend in future).
+// ─────────────────────────────────────────────────────────────────────────────
+
+CK_RV SoftHSM::C_WrapKeyAuthenticated
+(
+	CK_SESSION_HANDLE hSession,
+	CK_MECHANISM_PTR pMechanism,
+	CK_OBJECT_HANDLE hWrappingKey,
+	CK_OBJECT_HANDLE hKey,
+	CK_BYTE_PTR pAssociatedData,
+	CK_ULONG ulAssociatedDataLen,
+	CK_BYTE_PTR pWrappedKey,
+	CK_ULONG_PTR pulWrappedKeyLen
+)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pMechanism == NULL_PTR || pulWrappedKeyLen == NULL_PTR) return CKR_ARGUMENTS_BAD;
+	if (pMechanism->mechanism != CKM_AES_GCM) return CKR_MECHANISM_INVALID;
+	if (pMechanism->pParameter == NULL_PTR ||
+	    pMechanism->ulParameterLen != sizeof(CK_AES_GCM_PARAMS))
+		return CKR_ARGUMENTS_BAD;
+	CK_AES_GCM_PARAMS* gcmParam = reinterpret_cast<CK_AES_GCM_PARAMS*>(pMechanism->pParameter);
+	if (gcmParam->pIv == NULL_PTR || gcmParam->ulIvLen == 0) return CKR_ARGUMENTS_BAD;
+	size_t tagLen = gcmParam->ulTagBits / 8;
+	if (tagLen == 0 || tagLen > 16) return CKR_ARGUMENTS_BAD;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	Token* token = session->getToken();
+	if (token == NULL) return CKR_GENERAL_ERROR;
+
+	// Validate wrapping key
+	OSObject* wrapKey = (OSObject*)handleManager->getObject(hWrappingKey);
+	if (wrapKey == NULL_PTR || !wrapKey->isValid()) return CKR_WRAPPING_KEY_HANDLE_INVALID;
+	if (wrapKey->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED) != CKO_SECRET_KEY)
+		return CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
+	if (wrapKey->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_AES)
+		return CKR_WRAPPING_KEY_TYPE_INCONSISTENT;
+	if (wrapKey->getBooleanValue(CKA_WRAP, false) == false)
+		return CKR_KEY_FUNCTION_NOT_PERMITTED;
+	{
+		CK_BBOOL onTok = wrapKey->getBooleanValue(CKA_TOKEN, false);
+		CK_BBOOL priv  = wrapKey->getBooleanValue(CKA_PRIVATE, true);
+		CK_RV rv2 = haveRead(session->getState(), onTok, priv);
+		if (rv2 != CKR_OK) return rv2;
+	}
+
+	// Validate key-to-be-wrapped
+	OSObject* key = (OSObject*)handleManager->getObject(hKey);
+	if (key == NULL_PTR || !key->isValid()) return CKR_KEY_HANDLE_INVALID;
+	if (key->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED) != CKO_SECRET_KEY)
+		return CKR_KEY_NOT_WRAPPABLE; // private-key PKCS8 wrapping not yet implemented
+	if (key->getBooleanValue(CKA_EXTRACTABLE, false) == false) return CKR_KEY_UNEXTRACTABLE;
+	if (key->getBooleanValue(CKA_WRAP_WITH_TRUSTED, false) &&
+	    wrapKey->getBooleanValue(CKA_TRUSTED, false) == false)
+		return CKR_KEY_NOT_WRAPPABLE;
+	{
+		CK_BBOOL onTok = key->getBooleanValue(CKA_TOKEN, false);
+		CK_BBOOL priv  = key->getBooleanValue(CKA_PRIVATE, true);
+		CK_RV rv2 = haveRead(session->getState(), onTok, priv);
+		if (rv2 != CKR_OK) return rv2;
+	}
+
+	// Extract raw key bytes
+	ByteString keydata;
+	{
+		CK_BBOOL isPriv = key->getBooleanValue(CKA_PRIVATE, true);
+		if (isPriv)
+		{
+			if (!token->decrypt(key->getByteStringValue(CKA_VALUE), keydata))
+				return CKR_GENERAL_ERROR;
+		}
+		else
+		{
+			keydata = key->getByteStringValue(CKA_VALUE);
+		}
+	}
+	if (keydata.size() == 0) return CKR_KEY_NOT_WRAPPABLE;
+
+	// Load the AES wrapping key
+	SymmetricAlgorithm* cipher = CryptoFactory::i()->getSymmetricAlgorithm(SymAlgo::AES);
+	if (cipher == NULL) return CKR_MECHANISM_INVALID;
+	SymmetricKey* aesKey = new SymmetricKey();
+	if (getSymmetricKey(aesKey, token, wrapKey) != CKR_OK)
+	{
+		cipher->recycleKey(aesKey);
+		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+		return CKR_GENERAL_ERROR;
+	}
+	aesKey->setBitLen(aesKey->getKeyBits().size() * 8);
+
+	// AES-GCM encrypt: ciphertext || tag
+	ByteString iv(gcmParam->pIv, gcmParam->ulIvLen);
+	ByteString aad;
+	if (pAssociatedData != NULL_PTR && ulAssociatedDataLen > 0)
+		aad = ByteString(pAssociatedData, ulAssociatedDataLen);
+
+	if (!cipher->encryptInit(aesKey, SymMode::GCM, iv, true, tagLen, aad))
+	{
+		cipher->recycleKey(aesKey);
+		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+		return CKR_MECHANISM_INVALID;
+	}
+
+	ByteString cipherOut, tagOut;
+	bool ok = cipher->encryptUpdate(keydata, cipherOut) && cipher->encryptFinal(tagOut);
+	cipher->recycleKey(aesKey);
+	CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+	if (!ok) return CKR_FUNCTION_FAILED;
+
+	ByteString wrapped = cipherOut + tagOut;
+
+	if (pWrappedKey != NULL_PTR)
+	{
+		if (*pulWrappedKeyLen < wrapped.size()) return CKR_BUFFER_TOO_SMALL;
+		memcpy(pWrappedKey, wrapped.byte_str(), wrapped.size());
+	}
+	*pulWrappedKeyLen = static_cast<CK_ULONG>(wrapped.size());
+	return CKR_OK;
+}
+
+CK_RV SoftHSM::C_UnwrapKeyAuthenticated
+(
+	CK_SESSION_HANDLE hSession,
+	CK_MECHANISM_PTR pMechanism,
+	CK_OBJECT_HANDLE hUnwrappingKey,
+	CK_BYTE_PTR pWrappedKey,
+	CK_ULONG ulWrappedKeyLen,
+	CK_ATTRIBUTE_PTR pTemplate,
+	CK_ULONG ulAttributeCount,
+	CK_BYTE_PTR pAssociatedData,
+	CK_ULONG ulAssociatedDataLen,
+	CK_OBJECT_HANDLE_PTR phKey
+)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pMechanism == NULL_PTR) return CKR_ARGUMENTS_BAD;
+	if (pWrappedKey == NULL_PTR || phKey == NULL_PTR) return CKR_ARGUMENTS_BAD;
+	if (pTemplate == NULL_PTR && ulAttributeCount != 0) return CKR_ARGUMENTS_BAD;
+	if (pMechanism->mechanism != CKM_AES_GCM) return CKR_MECHANISM_INVALID;
+	if (pMechanism->pParameter == NULL_PTR ||
+	    pMechanism->ulParameterLen != sizeof(CK_AES_GCM_PARAMS))
+		return CKR_ARGUMENTS_BAD;
+	CK_AES_GCM_PARAMS* gcmParam = reinterpret_cast<CK_AES_GCM_PARAMS*>(pMechanism->pParameter);
+	if (gcmParam->pIv == NULL_PTR || gcmParam->ulIvLen == 0) return CKR_ARGUMENTS_BAD;
+	size_t tagLen = gcmParam->ulTagBits / 8;
+	if (tagLen == 0 || tagLen > 16) return CKR_ARGUMENTS_BAD;
+	if (ulWrappedKeyLen <= tagLen) return CKR_WRAPPED_KEY_LEN_RANGE;
+
+	auto sessionGuard = handleManager->getSessionShared(hSession);
+	Session* session = sessionGuard.get();
+	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
+	Token* token = session->getToken();
+	if (token == NULL) return CKR_GENERAL_ERROR;
+
+	// Validate unwrapping key
+	OSObject* unwrapKey = (OSObject*)handleManager->getObject(hUnwrappingKey);
+	if (unwrapKey == NULL_PTR || !unwrapKey->isValid()) return CKR_UNWRAPPING_KEY_HANDLE_INVALID;
+	if (unwrapKey->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED) != CKO_SECRET_KEY)
+		return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
+	if (unwrapKey->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_AES)
+		return CKR_UNWRAPPING_KEY_TYPE_INCONSISTENT;
+	if (unwrapKey->getBooleanValue(CKA_UNWRAP, false) == false)
+		return CKR_KEY_FUNCTION_NOT_PERMITTED;
+	{
+		CK_BBOOL onTok = unwrapKey->getBooleanValue(CKA_TOKEN, false);
+		CK_BBOOL priv  = unwrapKey->getBooleanValue(CKA_PRIVATE, true);
+		CK_RV rv2 = haveRead(session->getState(), onTok, priv);
+		if (rv2 != CKR_OK) return rv2;
+	}
+
+	// Parse template to determine destination object class
+	CK_OBJECT_CLASS objClass = CKO_SECRET_KEY;
+	CK_KEY_TYPE keyType = CKK_GENERIC_SECRET;
+	CK_BBOOL isOnToken = CK_FALSE;
+	CK_BBOOL isPrivate = CK_TRUE;
+	CK_CERTIFICATE_TYPE dummyCert;
+	bool isImplicit = false;
+	{
+		CK_RV rv2 = extractObjectInformation(pTemplate, ulAttributeCount,
+		                                      objClass, keyType, dummyCert,
+		                                      isOnToken, isPrivate, isImplicit);
+		if (rv2 != CKR_OK) return rv2;
+	}
+	if (objClass != CKO_SECRET_KEY) return CKR_ATTRIBUTE_VALUE_INVALID; // private-key not yet supported
+
+	// Authorization check for creating the new object
+	{
+		CK_RV rv2 = haveWrite(session->getState(), isOnToken, isPrivate);
+		if (rv2 != CKR_OK) return rv2;
+	}
+
+	// Load the AES unwrapping key
+	SymmetricAlgorithm* cipher = CryptoFactory::i()->getSymmetricAlgorithm(SymAlgo::AES);
+	if (cipher == NULL) return CKR_MECHANISM_INVALID;
+	SymmetricKey* aesKey = new SymmetricKey();
+	if (getSymmetricKey(aesKey, token, unwrapKey) != CKR_OK)
+	{
+		cipher->recycleKey(aesKey);
+		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+		return CKR_GENERAL_ERROR;
+	}
+	aesKey->setBitLen(aesKey->getKeyBits().size() * 8);
+
+	// AES-GCM decrypt: pWrappedKey = ciphertext ‖ tag
+	ByteString iv(gcmParam->pIv, gcmParam->ulIvLen);
+	ByteString aad;
+	if (pAssociatedData != NULL_PTR && ulAssociatedDataLen > 0)
+		aad = ByteString(pAssociatedData, ulAssociatedDataLen);
+
+	if (!cipher->decryptInit(aesKey, SymMode::GCM, iv, true, tagLen, aad))
+	{
+		cipher->recycleKey(aesKey);
+		CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+		return CKR_MECHANISM_INVALID;
+	}
+
+	// Pass ciphertext ‖ tag as a single buffer (OSSL AEAD layer splits internally)
+	ByteString aeadBuf(pWrappedKey, ulWrappedKeyLen);
+	ByteString keydata, discarded;
+	bool ok = cipher->decryptUpdate(aeadBuf, keydata) && cipher->decryptFinal(discarded);
+	cipher->recycleKey(aesKey);
+	CryptoFactory::i()->recycleSymmetricAlgorithm(cipher);
+	if (!ok) return CKR_WRAPPED_KEY_INVALID; // auth tag mismatch
+
+	// Build the secret-key creation template (mirrors C_UnwrapKey pattern)
+	const CK_ULONG maxAttribs = 32;
+	CK_ATTRIBUTE secretAttribs[maxAttribs] = {
+		{ CKA_CLASS,    &objClass,  sizeof(objClass)  },
+		{ CKA_TOKEN,    &isOnToken, sizeof(isOnToken)  },
+		{ CKA_PRIVATE,  &isPrivate, sizeof(isPrivate)  },
+		{ CKA_KEY_TYPE, &keyType,   sizeof(keyType)    }
+	};
+	CK_ULONG secretAttribsCount = 4;
+	if (ulAttributeCount > (maxAttribs - secretAttribsCount)) return CKR_TEMPLATE_INCONSISTENT;
+	for (CK_ULONG i = 0; i < ulAttributeCount; ++i)
+	{
+		switch (pTemplate[i].type)
+		{
+			case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE: case CKA_KEY_TYPE:
+				continue;
+			default:
+				secretAttribs[secretAttribsCount++] = pTemplate[i];
+		}
+	}
+
+	*phKey = CK_INVALID_HANDLE;
+	CK_RV rv = this->CreateObject(hSession, secretAttribs, secretAttribsCount, phKey, OBJECT_OP_UNWRAP);
+	if (rv == CKR_OK)
+	{
+		OSObject* osobject = (OSObject*)handleManager->getObject(*phKey);
+		if (osobject == NULL_PTR || !osobject->isValid())
+		{
+			rv = CKR_FUNCTION_FAILED;
+		}
+		else if (osobject->startTransaction())
+		{
+			bool bOK = true;
+			bOK = bOK && osobject->setAttribute(CKA_LOCAL, false);
+			bOK = bOK && osobject->setAttribute(CKA_ALWAYS_SENSITIVE, false);
+			bOK = bOK && osobject->setAttribute(CKA_NEVER_EXTRACTABLE, false);
+			ByteString value;
+			if (isPrivate)
+				token->encrypt(keydata, value);
+			else
+				value = keydata;
+			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
+			if (bOK)
+				bOK = osobject->commitTransaction();
+			else
+				osobject->abortTransaction();
+			if (!bOK) rv = CKR_FUNCTION_FAILED;
+		}
+		else
+		{
+			rv = CKR_FUNCTION_FAILED;
+		}
+	}
+
+	if (rv != CKR_OK && *phKey != CK_INVALID_HANDLE)
+	{
+		OSObject* obj = (OSObject*)handleManager->getObject(*phKey);
+		handleManager->destroyObject(*phKey);
+		if (obj) obj->destroyObject();
+		*phKey = CK_INVALID_HANDLE;
+	}
+	return rv;
+}
+
 // Derive a key from the specified base key
 CK_RV SoftHSM::C_DeriveKey
 (
