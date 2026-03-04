@@ -833,6 +833,17 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 			pInfo->flags = CKF_GENERATE_KEY_PAIR;
 			break;
 		case CKM_SLH_DSA:
+		case CKM_HASH_SLH_DSA:
+		case CKM_HASH_SLH_DSA_SHA224:
+		case CKM_HASH_SLH_DSA_SHA256:
+		case CKM_HASH_SLH_DSA_SHA384:
+		case CKM_HASH_SLH_DSA_SHA512:
+		case CKM_HASH_SLH_DSA_SHA3_224:
+		case CKM_HASH_SLH_DSA_SHA3_256:
+		case CKM_HASH_SLH_DSA_SHA3_384:
+		case CKM_HASH_SLH_DSA_SHA3_512:
+		case CKM_HASH_SLH_DSA_SHAKE128:
+		case CKM_HASH_SLH_DSA_SHAKE256:
 			pInfo->ulMinKeySize = 128;
 			pInfo->ulMaxKeySize = 256;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;

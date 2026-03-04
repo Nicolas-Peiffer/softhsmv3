@@ -337,6 +337,15 @@ static CK_RV parseMLDSASignContext(CK_MECHANISM_PTR pMechanism, MLDSA_SIGN_PARAM
 
 // Parse CK_SIGN_ADDITIONAL_CONTEXT or CK_HASH_SIGN_ADDITIONAL_CONTEXT → SLHDSA_SIGN_PARAMS
 // SLH-DSA is always probabilistic; hedgeVariant is accepted but ignored.
+//
+// Parameter struct selection (PKCS#11 v3.2):
+//   CKM_HASH_SLH_DSA (generic)  → CK_HASH_SIGN_ADDITIONAL_CONTEXT (includes hash field)
+//   CKM_HASH_SLH_DSA_SHA256 etc → CK_SIGN_ADDITIONAL_CONTEXT (hash is implied by mechanism)
+//
+// When isHashMech is false (all 10 typed CKM_HASH_SLH_DSA_* variants), callers MUST supply
+// CK_SIGN_ADDITIONAL_CONTEXT, NOT CK_HASH_SIGN_ADDITIONAL_CONTEXT.  Passing the larger
+// struct to a typed variant returns CKR_ARGUMENTS_BAD with an "Invalid SLH-DSA parameter
+// size" error.
 static CK_RV parseSLHDSASignContext(CK_MECHANISM_PTR pMechanism, SLHDSA_SIGN_PARAMS& out)
 {
 	memset(&out, 0, sizeof(out));
@@ -874,6 +883,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 #endif
 	else if (isMLDSA)
 	{
+		if (key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_ML_DSA)
+			return CKR_KEY_TYPE_INCONSISTENT;
+
 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::MLDSA);
 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
 
@@ -893,6 +905,9 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 	}
 	else if (isSLHDSA)
 	{
+		if (key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_SLH_DSA)
+			return CKR_KEY_TYPE_INCONSISTENT;
+
 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::SLHDSA);
 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
 
@@ -912,7 +927,12 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 	}
 	else
 	{
-        }
+		// No recognized mechanism flag was set — the mechanism switch above
+		// must return CKR_MECHANISM_INVALID before reaching here; this branch
+		// is unreachable today, but assert defensively to prevent a NULL
+		// dereference if a future mechanism case forgets to set a flag.
+		return CKR_MECHANISM_INVALID;
+	}
 
 	// Initialize signing
 	if (bAllowMultiPartOp && !asymCrypto->signInit(privateKey,mechanism,param,paramLen))
@@ -1865,6 +1885,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 #endif
 	else if (isMLDSA)
 	{
+		if (key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_ML_DSA)
+			return CKR_KEY_TYPE_INCONSISTENT;
+
 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::MLDSA);
 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
 
@@ -1884,6 +1907,9 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 	}
 	else if (isSLHDSA)
 	{
+		if (key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED) != CKK_SLH_DSA)
+			return CKR_KEY_TYPE_INCONSISTENT;
+
 		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(AsymAlgo::SLHDSA);
 		if (asymCrypto == NULL) return CKR_MECHANISM_INVALID;
 
@@ -1903,7 +1929,12 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 	}
 	else
 	{
-        }
+		// No recognized mechanism flag was set — the mechanism switch above
+		// must return CKR_MECHANISM_INVALID before reaching here; this branch
+		// is unreachable today, but assert defensively to prevent a NULL
+		// dereference if a future mechanism case forgets to set a flag.
+		return CKR_MECHANISM_INVALID;
+	}
 
 	// Initialize verifying
 	if (bAllowMultiPartOp && !asymCrypto->verifyInit(publicKey,mechanism,param,paramLen))
