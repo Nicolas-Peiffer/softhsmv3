@@ -63,7 +63,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 ## What's New vs SoftHSM2
 
 | Feature | SoftHSM2 (v2.7.0) | SoftHSMv3 |
-|---|---|---|
+| --- | --- | --- |
 | OpenSSL backend | 1.x (deprecated APIs) | 3.6 (EVP-only) |
 | PKCS#11 version | 3.0 | **3.2** (CSD01, April 2025) |
 | ML-KEM (FIPS 203) | Not supported | **ML-KEM-512/768/1024** |
@@ -84,7 +84,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 ### ML-KEM (Key Encapsulation Mechanism) — FIPS 203
 
 | Variant | Public Key | Private Key | Ciphertext | Shared Secret | NIST Level |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | ML-KEM-512 | 800 B | 1,632 B | 768 B | 32 B | 1 |
 | ML-KEM-768 | 1,184 B | 2,400 B | 1,088 B | 32 B | 3 |
 | ML-KEM-1024 | 1,568 B | 3,168 B | 1,568 B | 32 B | 5 |
@@ -92,7 +92,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 ### ML-DSA (Digital Signature Algorithm) — FIPS 204
 
 | Variant | Public Key | Private Key | Signature | NIST Level |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | ML-DSA-44 | 1,312 B | 2,560 B | 2,420 B | 2 |
 | ML-DSA-65 | 1,952 B | 4,032 B | 3,293 B | 3 |
 | ML-DSA-87 | 2,592 B | 4,896 B | 4,627 B | 5 |
@@ -100,7 +100,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 ### SLH-DSA (Stateless Hash-Based Signature) — FIPS 205
 
 | Variant | Public Key | Private Key | Signature | NIST Level |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | SLH-DSA-SHA2-128s | 32 B | 64 B | 7,856 B | 1 (small) |
 | SLH-DSA-SHA2-128f | 32 B | 64 B | 17,088 B | 1 (fast) |
 | SLH-DSA-SHA2-192s | 48 B | 96 B | 16,224 B | 3 (small) |
@@ -209,7 +209,6 @@ C_UnwrapKeyAuthenticated()
 
 ## Known Limitations
 
-- **`C_VerifySignatureFinal` / `C_VerifySignatureUpdate`** (Issue [#22](https://github.com/pqctoday/softhsmv3/issues/22)): The multi-part streaming path of pre-bound signature verification is not yet functional for ML-DSA/SLH-DSA. The one-shot `C_VerifySignature` path works correctly.
 - **Stateful hash-based signatures** (HSS, XMSS): Not implemented — these require persistent state management outside the scope of a software HSM.
 - **Single-threaded**: The WASM target is single-threaded (no SharedArrayBuffer worker pool).
 - **Non-persistent token**: Token state is in-memory only and does not survive WASM module reload.
