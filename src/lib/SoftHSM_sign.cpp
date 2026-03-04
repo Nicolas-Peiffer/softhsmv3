@@ -2638,7 +2638,14 @@ CK_RV SoftHSM::C_VerifySignatureInit(CK_SESSION_HANDLE hSession,
 		return CKR_HOST_MEMORY;
 	}
 
-	// Upgrade op type so standard C_Verify* calls are correctly rejected.
+	// Enable both single-part (C_VerifySignature) and multi-part
+	// (C_VerifySignatureUpdate + C_VerifySignatureFinal) paths.
+	// AsymVerifyInit leaves allowMultiPartOp=false for ML-DSA/SLH-DSA (they are
+	// single-part-only in the standard verifyUpdate/verifyFinal sense), but G4
+	// multi-part accumulates data in session->msgBuffer and calls the one-shot
+	// verify at Final time, so both flags must be true here.
+	session->clearMsgBuffer();
+	session->setAllowMultiPartOp(true);
 	session->setOpType(SESSION_OP_VERIFY_SIGNATURE);
 	return CKR_OK;
 }
@@ -2715,19 +2722,10 @@ CK_RV SoftHSM::C_VerifySignatureUpdate(CK_SESSION_HANDLE hSession,
 		return CKR_OPERATION_NOT_INITIALIZED;
 	}
 
-	AsymmetricAlgorithm* asymCrypto = session->getAsymmetricCryptoOp();
-	if (asymCrypto == NULL)
-	{
-		session->resetOp();
-		return CKR_OPERATION_NOT_INITIALIZED;
-	}
-
-	ByteString part(pPart, ulPartLen);
-	if (!asymCrypto->verifyUpdate(part))
-	{
-		session->resetOp();
-		return CKR_FUNCTION_FAILED;
-	}
+	// Accumulate data — the actual verify happens at C_VerifySignatureFinal using
+	// the one-shot AsymmetricAlgorithm::verify() call, which works for all PQC
+	// mechanisms (ML-DSA, SLH-DSA) without requiring a functional verifyFinal().
+	session->appendToMsgBuffer(pPart, ulPartLen);
 	return CKR_OK;
 }
 
@@ -2753,26 +2751,36 @@ CK_RV SoftHSM::C_VerifySignatureFinal(CK_SESSION_HANDLE hSession)
 		return CKR_OPERATION_NOT_INITIALIZED;
 	}
 	PreBoundVerifySig* hdr = reinterpret_cast<PreBoundVerifySig*>(blobPtr);
-	// Secondary bounds check: ensure sigLen does not overrun the allocation
-	// (mirrors the check in C_VerifySignature to guard against blob corruption).
-	if (hdr->sigLen > blobLen - sizeof(PreBoundVerifySig))
+	// Overflow-safe bounds check (mirrors C_VerifySignature).
+	if (hdr->sigLen > blobLen - sizeof(PreBoundVerifySig) ||
+	    hdr->algoParamLen > blobLen - sizeof(PreBoundVerifySig) - hdr->sigLen)
 	{
 		session->resetOp();
 		return CKR_OPERATION_NOT_INITIALIZED;
 	}
 	CK_BYTE_PTR sigBytes = reinterpret_cast<CK_BYTE_PTR>(
 		reinterpret_cast<uint8_t*>(blobPtr) + sizeof(PreBoundVerifySig));
+	void* algoParam = (hdr->algoParamLen > 0) ?
+		reinterpret_cast<void*>(reinterpret_cast<uint8_t*>(blobPtr) + sizeof(PreBoundVerifySig) + hdr->sigLen) :
+		NULL;
 
 	AsymmetricAlgorithm* asymCrypto = session->getAsymmetricCryptoOp();
-	if (asymCrypto == NULL)
+	AsymMech::Type mechanism        = session->getMechanism();
+	PublicKey* publicKey            = session->getPublicKey();
+	if (asymCrypto == NULL || publicKey == NULL)
 	{
 		session->resetOp();
 		return CKR_OPERATION_NOT_INITIALIZED;
 	}
 
+	// Use the one-shot verify with the accumulated message — this works for all
+	// PQC mechanisms (ML-DSA, SLH-DSA) without requiring verifyFinal() to be
+	// implemented.  The accumulated message was built by C_VerifySignatureUpdate.
+	ByteString msg(session->getMsgBuffer());
 	ByteString signature(sigBytes, hdr->sigLen);
-	bool ok = asymCrypto->verifyFinal(signature);
-	session->resetOp();
+	bool ok = asymCrypto->verify(publicKey, msg, signature, mechanism,
+	                             algoParam, hdr->algoParamLen);
+	session->resetOp();  // also clears msgBuffer
 	return ok ? CKR_OK : CKR_SIGNATURE_INVALID;
 }
 

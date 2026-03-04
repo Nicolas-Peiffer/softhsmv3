@@ -184,6 +184,10 @@ int Session::getOpType()
 // Reset the operations
 void Session::resetOp()
 {
+	// Always clear the message accumulation buffer so a subsequent
+	// C_VerifySignatureUpdate / C_VerifySignatureFinal sequence starts fresh.
+	msgBuffer.wipe();
+
 	if (param != NULL)
 	{
 		free(param);
@@ -452,4 +456,23 @@ void Session::setSymmetricKey(SymmetricKey* inSymmetricKey)
 SymmetricKey* Session::getSymmetricKey()
 {
 	return symmetricKey;
+}
+
+// Append bytes to the message accumulation buffer (C_VerifySignatureUpdate)
+void Session::appendToMsgBuffer(const CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
+{
+	if (pPart != NULL && ulPartLen > 0)
+		msgBuffer += ByteString(pPart, ulPartLen);
+}
+
+// Return the accumulated message (C_VerifySignatureFinal)
+const ByteString& Session::getMsgBuffer() const
+{
+	return msgBuffer;
+}
+
+// Clear the accumulation buffer (called by C_VerifySignatureInit and resetOp)
+void Session::clearMsgBuffer()
+{
+	msgBuffer.wipe();
 }

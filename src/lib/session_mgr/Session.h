@@ -33,6 +33,7 @@
 #ifndef _SOFTHSM_V2_SESSION_H
 #define _SOFTHSM_V2_SESSION_H
 
+#include "ByteString.h"
 #include "Slot.h"
 #include "FindOperation.h"
 #include "HashAlgorithm.h"
@@ -133,6 +134,13 @@ public:
 	void setSymmetricKey(SymmetricKey* inSymmetricKey);
 	SymmetricKey* getSymmetricKey();
 
+	// Message accumulation buffer — used by C_VerifySignatureUpdate to collect
+	// data before C_VerifySignatureFinal calls the one-shot verify.
+	// Cleared unconditionally by resetOp().
+	void appendToMsgBuffer(const CK_BYTE_PTR pPart, CK_ULONG ulPartLen);
+	const ByteString& getMsgBuffer() const;
+	void clearMsgBuffer();
+
 private:
 	// Constructor
 	Session();
@@ -179,6 +187,9 @@ private:
 
 	// Symmetric Crypto
 	SymmetricKey* symmetricKey;
+
+	// Pre-bound verify message accumulation (C_VerifySignatureUpdate / Final)
+	ByteString msgBuffer;
 };
 
 #endif // !_SOFTHSM_V2_SESSION_H
