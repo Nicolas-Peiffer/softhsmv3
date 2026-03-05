@@ -1,9 +1,9 @@
-# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v6)
+# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v7)
 
-**Updated:** 2026-03-04 (v6 — CKA_PUBLIC_KEY_INFO + SP 800-108 Counter KDF added)
-**Baseline:** Post-Phase-7 + G-DA1/DA2 + G-5G1/5G2/5G3 + G-PUB1 + G-PK1 — all tracked gaps resolved
+**Updated:** 2026-03-04 (v7 — Feedback KDF, ECDH Cofactor Derive, validation switch bugfix)
+**Baseline:** Post-Phase-7 + G-DA1/DA2 + G-5G1/5G2/5G3 + G-PUB1 + G-PK1 + G-PK2 + G-PK4 — all tracked gaps resolved
 **Spec reference:** OASIS PKCS#11 v3.2 CSD01 (<http://docs.oasis-open.org/pkcs11/pkcs11-base/v3.2/>)
-**Prior baseline (v5):** 5G Security module gaps resolved (2026-03-04).
+**Prior baseline (v6):** CKA_PUBLIC_KEY_INFO (G-PUB1) and SP 800-108 Counter KDF (G-PK1) resolved (2026-03-04).
 
 ---
 
@@ -22,11 +22,18 @@ for SUCI deconcealment (3GPP TS 33.501 §6.12.2).
 **NEW (v6):** `CKA_PUBLIC_KEY_INFO` (G-PUB1) computed at keygen for all 6 key types
 (RSA, EC, EdDSA, ML-DSA, SLH-DSA, ML-KEM) via `i2d_PUBKEY()`. `CKM_SP800_108_COUNTER_KDF`
 (G-PK1) implemented using OpenSSL KBKDF — completes NIST SP 800-108 counter mode support.
+**NEW (v7):** `CKM_SP800_108_FEEDBACK_KDF` (G-PK2) implemented — SP 800-108 feedback mode
+KBKDF with optional IV seed via `OSSL_KDF_PARAM_SEED`. `CKM_ECDH1_COFACTOR_DERIVE` (G-PK4)
+implemented via new `OSSLECDH::deriveKeyWithCofactor()` using `EVP_PKEY_CTX_set_ecdh_cofactor_mode`.
+**Bugfix (v7):** `C_DeriveKey` validation switch was missing `CKM_HKDF_DERIVE` and
+`CKM_SP800_108_COUNTER_KDF` case labels — these mechanisms were unreachable (added in prior
+sessions but not gated in the `#ifndef WITH_FIPS` switch). All KDF mechanisms now correctly
+listed in the validation switch.
 
 | Dimension | Remaining open | Notes |
 | --- | --- | --- |
-| C_* function stubs (in scope) | 0 | All G1–G6 + G-DA1/G-DA2 + G-5G1/5G2/5G3 + G-PUB1/G-PK1 resolved |
-| CKM_* mechanisms (in scope) | 0 | AES-CTR, HKDF, X9.63 KDF, SP 800-108 Counter KDF added |
+| C_* function stubs (in scope) | 0 | All G1–G6 + G-DA1/G-DA2 + G-5G1/5G2/5G3 + G-PUB1/G-PK1/G-PK2/G-PK4 resolved |
+| CKM_* mechanisms (in scope) | 0 | AES-CTR, HKDF, X9.63 KDF, SP 800-108 Counter+Feedback KDF, ECDH1 Cofactor added |
 | CKA_* attribute stubs (in scope) | 0 | CKA_PUBLIC_KEY_INFO now populated at keygen for all key types |
 | Out-of-scope stubs | 3 | Async (G7), Recovery/Combined ops (G8) |
 | Out-of-scope mechanisms | 1 | CKM_RIPEMD160 (WASM `no-module` constraint, G9) |
@@ -368,3 +375,64 @@ As of 2026-03-04 (v4):
 | Per-message encrypt/decrypt (G3) | softhsmv3 ✓ | Not wired (low priority) |
 | Pre-bound signature verify (G4) | softhsmv3 ✓ | Not wired (low priority) |
 | Authenticated key wrap (G5) | softhsmv3 ✓ | Not wired (low priority) |
+| AES-CTR (G-5G1) | ✓ `hsm_aesCtrEncrypt/Decrypt()` | Not wired |
+| ECDH X9.63 KDF / CKD_SHA256_KDF (G-5G2) | ✓ `hsm_ecdhDerive(kdf=CKD_SHA256_KDF)` | Not wired |
+| HKDF / CKM_HKDF_DERIVE (G-5G3) | ✓ `hsm_hkdf()` | Not wired |
+| CKA_PUBLIC_KEY_INFO at keygen (G-PUB1) | softhsmv3 ✓ (all 6 key types) | Automatic |
+| SP 800-108 Counter KDF (G-PK1) | ✓ `hsm_kbkdf()` | Not wired |
+| SP 800-108 Feedback KDF (G-PK2) | ✓ `hsm_kbkdfFeedback()` | Not wired |
+| ECDH1 Cofactor Derive (G-PK4) | ✓ `hsm_ecdhCofactorDerive()` | Not wired |
+
+---
+
+## §1.14 G-PK2 — CKM_SP800_108_FEEDBACK_KDF (PKCS#11 v3.2 §2.44.2)
+
+**Status:** ✓ RESOLVED (v7)
+
+**PKCS#11 value:** `0x000003ad`  
+**OpenSSL API:** `EVP_KDF_fetch(NULL, "KBKDF", NULL)` with `OSSL_KDF_PARAM_MODE = "FEEDBACK"` + `OSSL_KDF_PARAM_SEED` for IV.
+
+**SP 800-108 §4.2 feedback mode:** K(i) = PRF(Ki, K(i−1) ∥ [i]_r ∥ Label ∥ 0x00 ∥ Context ∥ [L]_r). K(0) = IV (seed). Differs from counter mode in that each output block depends on the previous one, providing forward secrecy within a session.
+
+**Difference from COUNTER_KDF:** uses `CK_SP800_108_FEEDBACK_KDF_PARAMS` (28 bytes) which adds `ulIVLen` + `pIV` fields to the 20-byte `CK_SP800_108_KDF_PARAMS`. IV is passed to OpenSSL via `OSSL_KDF_PARAM_SEED`.
+
+**Changes:**
+- `src/lib/SoftHSM_keygen.cpp` — ~160 LOC handler inserted between COUNTER_KDF and HKDF blocks; mirrors COUNTER_KDF handler with `"FEEDBACK"` mode and `OSSL_KDF_PARAM_SEED`.
+- `src/lib/SoftHSM_slots.cpp` — `t["CKM_SP800_108_FEEDBACK_KDF"] = CKM_SP800_108_FEEDBACK_KDF;`
+- `pqc-timeline-app/src/wasm/softhsm.ts` — `hsm_kbkdfFeedback()` helper (~80 LOC); builds 28-byte `CK_SP800_108_FEEDBACK_KDF_PARAMS` with optional IV.
+- `HsmPqc/data/hsmConstants.ts` — `ckm-sp800-108-feedback-kdf` entry added.
+
+---
+
+## §1.15 G-PK4 — CKM_ECDH1_COFACTOR_DERIVE (PKCS#11 v3.2 §2.3.2)
+
+**Status:** ✓ RESOLVED (v7)
+
+**PKCS#11 value:** `0x00001051`  
+**OpenSSL API:** `EVP_PKEY_CTX_set_ecdh_cofactor_mode(ctx, 1)` called between `EVP_PKEY_derive_init()` and `EVP_PKEY_derive_set_peer()`.
+
+**What cofactor ECDH adds:** multiplies the ECDH shared secret by the curve's cofactor h. For prime-order curves (NIST P-256/384/521, cofactor = 1) the result is identical to `CKM_ECDH1_DERIVE`. For non-prime-order curves (e.g. certain Brainpool variants, cofactor > 1) it eliminates small-subgroup key-recovery attacks per [NIST SP 800-56A §5.7.1.2].
+
+**Changes:**
+- `src/lib/crypto/OSSLECDH.h` — added `deriveKeyWithCofactor()` declaration.
+- `src/lib/crypto/OSSLECDH.cpp` — added 75 LOC `deriveKeyWithCofactor()` implementation (copy of `deriveKey()` with `EVP_PKEY_CTX_set_ecdh_cofactor_mode(ctx, 1)` inserted after `EVP_PKEY_derive_init()`).
+- `src/lib/SoftHSM_keygen.cpp` — added `#include "OSSLECDH.h"`; extended `C_DeriveKey` ECDH dispatch to also accept `CKM_ECDH1_COFACTOR_DERIVE`; modified `deriveECDH()` to call `((OSSLECDH*)ecdh)->deriveKeyWithCofactor()` when mechanism is cofactor.
+- `src/lib/SoftHSM_slots.cpp` — `t["CKM_ECDH1_COFACTOR_DERIVE"] = CKM_ECDH1_COFACTOR_DERIVE;`
+- `pqc-timeline-app/src/wasm/softhsm.ts` — `CKM_ECDH1_COFACTOR_DERIVE = 0x1051` constant; `hsm_ecdhCofactorDerive()` helper.
+- `HsmPqc/data/hsmConstants.ts` — `ckm-ecdh1-cofactor-derive` entry added.
+
+---
+
+## §1.16 Bugfix — C_DeriveKey validation switch (v7)
+
+**Discovery:** `CKM_HKDF_DERIVE` (added in G-5G3) and `CKM_SP800_108_COUNTER_KDF` (added in G-PK1) were never reachable in `C_DeriveKey()`. The validation switch at `SoftHSM_keygen.cpp:1944` uses a `#ifndef WITH_FIPS` preprocessor guard (opened at line 154) that only listed `CKM_ECDH1_DERIVE` before `#endif`. Any unlisted mechanism returned `CKR_MECHANISM_INVALID` before reaching the handler blocks at lines 2211+ (COUNTER_KDF) and 2440+ (HKDF).
+
+**Fix:** Added the following cases to the validation switch (after the `#endif` so they're available in all build modes):
+```cpp
+case CKM_HKDF_DERIVE:
+case CKM_SP800_108_COUNTER_KDF:
+case CKM_SP800_108_FEEDBACK_KDF:
+    break;
+```
+Also added `case CKM_ECDH1_COFACTOR_DERIVE:` before the `#endif` (alongside `CKM_ECDH1_DERIVE`, guarded by `#ifndef WITH_FIPS`).
+

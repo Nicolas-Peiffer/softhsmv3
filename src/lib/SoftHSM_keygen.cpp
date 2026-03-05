@@ -77,6 +77,7 @@
 #include "OSSLRSAPublicKey.h"
 #include "OSSLECPublicKey.h"
 #include "OSSLEDPublicKey.h"
+#include "OSSLECDH.h"
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
@@ -1944,6 +1945,7 @@ CK_RV SoftHSM::C_DeriveKey
 	switch (pMechanism->mechanism)
 	{
 		case CKM_ECDH1_DERIVE:
+		case CKM_ECDH1_COFACTOR_DERIVE:
 #endif
 		case CKM_PKCS5_PBKD2:
 		case CKM_AES_ECB_ENCRYPT_DATA:
@@ -1951,6 +1953,9 @@ CK_RV SoftHSM::C_DeriveKey
 		case CKM_CONCATENATE_DATA_AND_BASE:
 		case CKM_CONCATENATE_BASE_AND_DATA:
 		case CKM_CONCATENATE_BASE_AND_KEY:
+		case CKM_HKDF_DERIVE:
+		case CKM_SP800_108_COUNTER_KDF:
+		case CKM_SP800_108_FEEDBACK_KDF:
 			break;
 
 		default:
@@ -2188,8 +2193,8 @@ CK_RV SoftHSM::C_DeriveKey
 
 
 #if defined(WITH_ECC) || defined(WITH_EDDSA)
-	// Derive ECDH secret
-	if (pMechanism->mechanism == CKM_ECDH1_DERIVE)
+	// Derive ECDH secret (standard and cofactor variants)
+	if (pMechanism->mechanism == CKM_ECDH1_DERIVE || pMechanism->mechanism == CKM_ECDH1_COFACTOR_DERIVE)
 	{
 		// Check key class and type
 		if (key->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED) != CKO_PRIVATE_KEY)
@@ -2424,6 +2429,215 @@ CK_RV SoftHSM::C_DeriveKey
 			kbkObj->abortTransaction();
 
 		if (!kbkOK)
+		{
+			handleManager->destroyObject(*phKey);
+			*phKey = CK_INVALID_HANDLE;
+			return CKR_FUNCTION_FAILED;
+		}
+		return CKR_OK;
+	}
+
+	// SP 800-108 Feedback KDF (PKCS#11 v3.2 §2.44.2, CKM_SP800_108_FEEDBACK_KDF = 0x000003ad)
+	if (pMechanism->mechanism == CKM_SP800_108_FEEDBACK_KDF)
+	{
+		if (pMechanism->pParameter == NULL_PTR ||
+		    pMechanism->ulParameterLen != sizeof(CK_SP800_108_FEEDBACK_KDF_PARAMS))
+		{
+			ERROR_MSG("CKM_SP800_108_FEEDBACK_KDF requires CK_SP800_108_FEEDBACK_KDF_PARAMS");
+			return CKR_ARGUMENTS_BAD;
+		}
+		CK_SP800_108_FEEDBACK_KDF_PARAMS* fp = (CK_SP800_108_FEEDBACK_KDF_PARAMS*)pMechanism->pParameter;
+
+		// Map prfType to OpenSSL MAC + digest/cipher name (same as COUNTER_KDF)
+		bool fbkUseCmac = (fp->prfType == CKM_AES_CMAC);
+		const char* fbkMacName = fbkUseCmac ? "CMAC" : "HMAC";
+		const char* fbkDigestName = nullptr;
+		if (!fbkUseCmac)
+		{
+			fbkDigestName = ckmToDigestName(fp->prfType);
+			if (fbkDigestName == nullptr)
+			{
+				ERROR_MSG("CKM_SP800_108_FEEDBACK_KDF: unsupported PRF 0x%08lx", (unsigned long)fp->prfType);
+				return CKR_MECHANISM_PARAM_INVALID;
+			}
+		}
+
+		// Determine output key length from template CKA_VALUE_LEN
+		CK_ULONG fbkKeyLen = 0;
+		for (CK_ULONG i = 0; i < ulCount; i++)
+		{
+			if (pTemplate[i].type == CKA_VALUE_LEN &&
+			    pTemplate[i].pValue != NULL_PTR &&
+			    pTemplate[i].ulValueLen == sizeof(CK_ULONG))
+			{
+				fbkKeyLen = *(CK_ULONG*)pTemplate[i].pValue;
+				break;
+			}
+		}
+		if (fbkKeyLen == 0 || fbkKeyLen > 512)
+		{
+			ERROR_MSG("CKM_SP800_108_FEEDBACK_KDF: CKA_VALUE_LEN missing or out of range (got %lu)", (unsigned long)fbkKeyLen);
+			return CKR_TEMPLATE_INCOMPLETE;
+		}
+
+		// Retrieve base key (Ki) — decrypt if stored privately
+		ByteString fbkIKM;
+		if (isKeyPrivate)
+		{
+			if (!token->decrypt(key->getByteStringValue(CKA_VALUE), fbkIKM))
+				return CKR_GENERAL_ERROR;
+		}
+		else
+		{
+			fbkIKM = key->getByteStringValue(CKA_VALUE);
+		}
+
+		// For CMAC: select AES cipher variant based on key size
+		const char* fbkCipherName = nullptr;
+		if (fbkUseCmac)
+		{
+			switch (fbkIKM.size())
+			{
+				case 16: fbkCipherName = "AES-128-CBC"; break;
+				case 24: fbkCipherName = "AES-192-CBC"; break;
+				case 32: fbkCipherName = "AES-256-CBC"; break;
+				default:
+					ERROR_MSG("CKM_SP800_108_FEEDBACK_KDF: unsupported CMAC key size %lu bytes", (unsigned long)fbkIKM.size());
+					return CKR_KEY_SIZE_RANGE;
+			}
+		}
+
+		// Parse CK_PRF_DATA_PARAM array for BYTE_ARRAY label/context data
+		ByteString fbkFixedInput;
+		for (CK_ULONG i = 0; i < fp->ulNumberOfDataParams; i++)
+		{
+			CK_PRF_DATA_PARAM* dp = &fp->pDataParams[i];
+			if (dp->type == CK_SP800_108_BYTE_ARRAY && dp->pValue != NULL_PTR && dp->ulValueLen > 0)
+				fbkFixedInput += ByteString((CK_BYTE_PTR)dp->pValue, dp->ulValueLen);
+		}
+
+		// Derive via OpenSSL KBKDF feedback mode
+		ByteString fbkOut;
+		fbkOut.resize(fbkKeyLen);
+		{
+			static const char fbkModeStr[] = "FEEDBACK";
+			EVP_KDF* fbkAlgo = EVP_KDF_fetch(NULL, "KBKDF", NULL);
+			if (fbkAlgo == NULL)
+			{
+				ERROR_MSG("EVP_KDF_fetch KBKDF failed: 0x%08X", ERR_get_error());
+				return CKR_FUNCTION_FAILED;
+			}
+			EVP_KDF_CTX* fbkctx = EVP_KDF_CTX_new(fbkAlgo);
+			EVP_KDF_free(fbkAlgo);
+			if (fbkctx == NULL)
+			{
+				ERROR_MSG("EVP_KDF_CTX_new KBKDF failed");
+				return CKR_FUNCTION_FAILED;
+			}
+
+			OSSL_PARAM fbkParams[9];
+			int fpi = 0;
+			fbkParams[fpi++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MODE,
+			                        const_cast<char*>(fbkModeStr), 0);
+			fbkParams[fpi++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_MAC,
+			                        const_cast<char*>(fbkMacName), 0);
+			if (!fbkUseCmac)
+				fbkParams[fpi++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST,
+				                        const_cast<char*>(fbkDigestName), 0);
+			else
+				fbkParams[fpi++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_CIPHER,
+				                        const_cast<char*>(fbkCipherName), 0);
+			fbkParams[fpi++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY,
+			                        fbkIKM.byte_str(), fbkIKM.size());
+			if (fbkFixedInput.size() > 0)
+				fbkParams[fpi++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT,
+				                        fbkFixedInput.byte_str(), fbkFixedInput.size());
+			// Optional IV/seed for feedback mode (PKCS#11 v3.2 §2.44.2 fp->pIV)
+			if (fp->pIV != NULL_PTR && fp->ulIVLen > 0)
+				fbkParams[fpi++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SEED,
+				                        fp->pIV, (size_t)fp->ulIVLen);
+			fbkParams[fpi] = OSSL_PARAM_construct_end();
+
+			int fbkRet = EVP_KDF_derive(fbkctx, fbkOut.byte_str(), fbkKeyLen, fbkParams);
+			EVP_KDF_CTX_free(fbkctx);
+			if (fbkRet <= 0)
+			{
+				ERROR_MSG("EVP_KDF_derive KBKDF feedback failed: 0x%08X", ERR_get_error());
+				return CKR_FUNCTION_FAILED;
+			}
+		}
+
+		// Build output key object (mirrors COUNTER_KDF handler)
+		CK_BBOOL fbkOnToken = CK_FALSE;
+		CK_BBOOL fbkPrivate = CK_TRUE;
+		for (CK_ULONG i = 0; i < ulCount; i++)
+		{
+			if (pTemplate[i].type == CKA_TOKEN && pTemplate[i].pValue != NULL_PTR)
+				fbkOnToken = *(CK_BBOOL*)pTemplate[i].pValue;
+			if (pTemplate[i].type == CKA_PRIVATE && pTemplate[i].pValue != NULL_PTR)
+				fbkPrivate = *(CK_BBOOL*)pTemplate[i].pValue;
+		}
+
+		CK_RV fbkRv = haveWrite(session->getState(), fbkOnToken, fbkPrivate);
+		if (fbkRv != CKR_OK)
+		{
+			if (fbkRv == CKR_USER_NOT_LOGGED_IN) INFO_MSG("User is not authorized");
+			if (fbkRv == CKR_SESSION_READ_ONLY)  INFO_MSG("Session is read-only");
+			return fbkRv;
+		}
+
+		const CK_ULONG fbkMaxAttribs = 32;
+		CK_OBJECT_CLASS fbkObjClass = CKO_SECRET_KEY;
+		CK_KEY_TYPE     fbkKeyType  = CKK_GENERIC_SECRET;
+		CK_ATTRIBUTE fbkAttribs[fbkMaxAttribs] = {
+			{ CKA_CLASS,    &fbkObjClass, sizeof(fbkObjClass) },
+			{ CKA_TOKEN,    &fbkOnToken,  sizeof(fbkOnToken)  },
+			{ CKA_PRIVATE,  &fbkPrivate,  sizeof(fbkPrivate)  },
+			{ CKA_KEY_TYPE, &fbkKeyType,  sizeof(fbkKeyType)  },
+		};
+		CK_ULONG fbkAttribsCount = 4;
+		for (CK_ULONG i = 0; i < ulCount && fbkAttribsCount < fbkMaxAttribs; i++)
+		{
+			switch (pTemplate[i].type)
+			{
+				case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE:
+				case CKA_KEY_TYPE: case CKA_CHECK_VALUE: continue;
+				default: fbkAttribs[fbkAttribsCount++] = pTemplate[i]; break;
+			}
+		}
+
+		fbkRv = CreateObject(hSession, fbkAttribs, fbkAttribsCount, phKey, OBJECT_OP_GENERATE);
+		if (fbkRv != CKR_OK) return fbkRv;
+
+		OSObject* fbkObj = (OSObject*)handleManager->getObject(*phKey);
+		if (fbkObj == NULL_PTR || !fbkObj->isValid()) return CKR_FUNCTION_FAILED;
+		if (!fbkObj->startTransaction()) return CKR_FUNCTION_FAILED;
+
+		bool fbkOK = true;
+		fbkOK = fbkOK && fbkObj->setAttribute(CKA_LOCAL, false);
+		CK_ULONG fbkGenMech = (CK_ULONG)CKM_SP800_108_FEEDBACK_KDF;
+		fbkOK = fbkOK && fbkObj->setAttribute(CKA_KEY_GEN_MECHANISM, fbkGenMech);
+		bool fbkAlwaysSens   = fbkObj->getBooleanValue(CKA_SENSITIVE, false);
+		fbkOK = fbkOK && fbkObj->setAttribute(CKA_ALWAYS_SENSITIVE, fbkAlwaysSens);
+		bool fbkNeverExtract = !fbkObj->getBooleanValue(CKA_EXTRACTABLE, false);
+		fbkOK = fbkOK && fbkObj->setAttribute(CKA_NEVER_EXTRACTABLE, fbkNeverExtract);
+
+		SymmetricKey fbkSymKey;
+		fbkSymKey.setKeyBits(fbkOut);
+		fbkSymKey.setBitLen(fbkKeyLen * 8);
+		ByteString fbkValue;
+		if (fbkPrivate)
+			token->encrypt(fbkSymKey.getKeyBits(), fbkValue);
+		else
+			fbkValue = fbkSymKey.getKeyBits();
+		fbkOK = fbkOK && fbkObj->setAttribute(CKA_VALUE, fbkValue);
+
+		if (fbkOK)
+			fbkObj->commitTransaction();
+		else
+			fbkObj->abortTransaction();
+
+		if (!fbkOK)
 		{
 			handleManager->destroyObject(*phKey);
 			*phKey = CK_INVALID_HANDLE;
@@ -4389,11 +4603,19 @@ CK_RV SoftHSM::deriveECDH
 		return CKR_GENERAL_ERROR;
 	}
 
-	// Derive the secret
+	// Derive the secret (use cofactor mode when CKM_ECDH1_COFACTOR_DERIVE)
 	SymmetricKey* secret = NULL;
 	CK_RV rv = CKR_OK;
-	if (!ecdh->deriveKey(&secret, publicKey, privateKey))
-		rv = CKR_GENERAL_ERROR;
+	if (pMechanism->mechanism == CKM_ECDH1_COFACTOR_DERIVE)
+	{
+		if (!((OSSLECDH*)ecdh)->deriveKeyWithCofactor(&secret, publicKey, privateKey))
+			rv = CKR_GENERAL_ERROR;
+	}
+	else
+	{
+		if (!ecdh->deriveKey(&secret, publicKey, privateKey))
+			rv = CKR_GENERAL_ERROR;
+	}
 	ecdh->recyclePrivateKey(privateKey);
 	ecdh->recyclePublicKey(publicKey);
 

@@ -64,6 +64,8 @@ public:
 	virtual unsigned long getMinKeySize();
 	virtual unsigned long getMaxKeySize();
 	virtual bool deriveKey(SymmetricKey **ppSymmetricKey, PublicKey* publicKey, PrivateKey* privateKey);
+	// Cofactor ECDH — same as deriveKey() but with EVP_PKEY_CTX_set_ecdh_cofactor_mode (PKCS#11 v3.2 §2.3.2)
+	bool deriveKeyWithCofactor(SymmetricKey **ppSymmetricKey, PublicKey* publicKey, PrivateKey* privateKey);
 	virtual bool reconstructKeyPair(AsymmetricKeyPair** ppKeyPair, ByteString& serialisedData);
 	virtual bool reconstructPublicKey(PublicKey** ppPublicKey, ByteString& serialisedData);
 	virtual bool reconstructPrivateKey(PrivateKey** ppPrivateKey, ByteString& serialisedData);

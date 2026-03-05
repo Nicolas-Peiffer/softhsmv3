@@ -241,6 +241,81 @@ bool OSSLECDH::deriveKey(SymmetricKey **ppSymmetricKey, PublicKey* publicKey, Pr
 	return true;
 }
 
+// Cofactor ECDH — identical to deriveKey() but enables cofactor mode (PKCS#11 v3.2 §2.3.2)
+bool OSSLECDH::deriveKeyWithCofactor(SymmetricKey **ppSymmetricKey, PublicKey* publicKey, PrivateKey* privateKey)
+{
+	if ((ppSymmetricKey == NULL) || (publicKey == NULL) || (privateKey == NULL))
+		return false;
+
+	EVP_PKEY* pub  = ((OSSLECPublicKey*)publicKey)->getOSSLKey();
+	EVP_PKEY* priv = ((OSSLECPrivateKey*)privateKey)->getOSSLKey();
+	if (pub == NULL || priv == NULL)
+	{
+		ERROR_MSG("Failed to get OpenSSL EC keys for cofactor ECDH");
+		return false;
+	}
+
+	EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(priv, NULL);
+	if (ctx == NULL)
+	{
+		ERROR_MSG("Failed to create EVP_PKEY_CTX for cofactor ECDH");
+		return false;
+	}
+
+	if (EVP_PKEY_derive_init(ctx) <= 0)
+	{
+		ERROR_MSG("Failed to init cofactor ECDH derivation");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+
+	// Enable cofactor Diffie-Hellman (PKCS#11 v3.2 CKM_ECDH1_COFACTOR_DERIVE)
+	if (EVP_PKEY_CTX_set_ecdh_cofactor_mode(ctx, 1) <= 0)
+	{
+		ERROR_MSG("Failed to enable cofactor mode for ECDH");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+
+	if (EVP_PKEY_derive_set_peer(ctx, pub) <= 0)
+	{
+		ERROR_MSG("Failed to set cofactor ECDH peer key");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+
+	size_t len = 0;
+	if (EVP_PKEY_derive(ctx, NULL, &len) <= 0)
+	{
+		ERROR_MSG("Failed to get cofactor ECDH secret length");
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+
+	ByteString secret;
+	secret.resize(len);
+	if (EVP_PKEY_derive(ctx, &secret[0], &len) <= 0)
+	{
+		ERROR_MSG("Cofactor ECDH derivation failed (0x%08X)", ERR_get_error());
+		EVP_PKEY_CTX_free(ctx);
+		return false;
+	}
+	EVP_PKEY_CTX_free(ctx);
+	secret.resize(len);
+
+	*ppSymmetricKey = new SymmetricKey(secret.size() * 8);
+	if (*ppSymmetricKey == NULL)
+		return false;
+	if (!(*ppSymmetricKey)->setKeyBits(secret))
+	{
+		delete *ppSymmetricKey;
+		*ppSymmetricKey = NULL;
+		return false;
+	}
+
+	return true;
+}
+
 unsigned long OSSLECDH::getMinKeySize()
 {
 	// Smallest EC group is secp112r1
