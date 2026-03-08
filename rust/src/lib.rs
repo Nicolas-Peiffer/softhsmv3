@@ -8,6 +8,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
+// Install panic hook on WASM start — turns panics into console.error with stack traces
+#[wasm_bindgen(start)]
+pub fn wasm_start() {
+    console_error_panic_hook::set_once();
+}
+
 // ── PKCS#11 Return Values ────────────────────────────────────────────────────
 
 pub const CKR_OK: u32 = 0x00000000;
@@ -28,6 +34,7 @@ pub const CKA_KEY_TYPE: u32 = 0x00000100;
 pub const CKA_MODULUS_BITS: u32 = 0x00000121;
 pub const CKA_VALUE_LEN: u32 = 0x00000161;
 pub const CKA_EC_PARAMS: u32 = 0x00000180;
+pub const CKA_EC_POINT: u32 = 0x00000181;
 pub const CKA_PARAMETER_SET: u32 = 0x0000061d;
 
 // Private attribute: stores the parameter set on generated keys
@@ -80,11 +87,29 @@ pub const CKM_SHA3_512_HMAC: u32 = 0x000002D1;
 // Generic Secret
 pub const CKM_GENERIC_SECRET_KEY_GEN: u32 = 0x00000350;
 
+// Key Derivation Functions
+pub const CKM_PKCS5_PBKD2: u32 = 0x000003b0;
+pub const CKM_SP800_108_COUNTER_KDF: u32 = 0x000003ac;
+pub const CKM_SP800_108_FEEDBACK_KDF: u32 = 0x000003ad;
+pub const CKM_HKDF_DERIVE: u32 = 0x0000402a;
+
+// PBKDF2 PRF types
+pub const CKP_PBKDF2_HMAC_SHA256: u32 = 0x04;
+pub const CKP_PBKDF2_HMAC_SHA384: u32 = 0x05;
+pub const CKP_PBKDF2_HMAC_SHA512: u32 = 0x06;
+
+// HKDF salt types
+const CKF_HKDF_SALT_DATA: u32 = 0x00000002;
+
+// SP 800-108 data param types
+const CK_SP800_108_BYTE_ARRAY: u32 = 0x00000004;
+
 // EC
 pub const CKM_EC_KEY_PAIR_GEN: u32 = 0x00001040;
 pub const CKM_ECDSA_SHA256: u32 = 0x00001044;
 pub const CKM_ECDSA_SHA384: u32 = 0x00001045;
 pub const CKM_ECDH1_DERIVE: u32 = 0x00001050;
+pub const CKM_ECDH1_COFACTOR_DERIVE: u32 = 0x00001051;
 pub const CKM_EC_EDWARDS_KEY_PAIR_GEN: u32 = 0x00001055;
 pub const CKM_EDDSA: u32 = 0x00001057;
 
@@ -269,22 +294,50 @@ fn store_algo_family(attrs: &mut Attributes, algo: u32) {
 
 // ── Memory Management ────────────────────────────────────────────────────────
 
+// ── Allocation size tracker ───────────────────────────────────────────────────
+// Maps each live allocation pointer (as u32) → original size so that
+// _free can reconstruct the exact Layout required by std::alloc::dealloc.
+thread_local! {
+    static ALLOC_SIZES: RefCell<HashMap<u32, u32>> = RefCell::new(HashMap::new());
+}
+
 #[wasm_bindgen(js_name = _malloc)]
 pub fn malloc(size: usize) -> *mut u8 {
-    let mut buf = Vec::with_capacity(size);
-    let ptr = buf.as_mut_ptr();
-    std::mem::forget(buf);
-    ptr
+    if size == 0 {
+        // Return a stable non-null sentinel; caller must not dereference it.
+        // We use address 4 (within the WASM reserved zero-page, never allocated).
+        return 4 as *mut u8;
+    }
+    unsafe {
+        let layout = std::alloc::Layout::from_size_align_unchecked(size, 1);
+        let ptr = std::alloc::alloc(layout);
+        if !ptr.is_null() {
+            ALLOC_SIZES.with(|m| m.borrow_mut().insert(ptr as u32, size as u32));
+        }
+        ptr
+    }
 }
 
 #[wasm_bindgen(js_name = _free)]
-pub fn free(ptr: *mut u8, size: usize) {
+pub fn free(ptr: *mut u8, _js_size: usize) {
     if ptr.is_null() {
         return;
     }
-    unsafe {
-        let _ = Vec::from_raw_parts(ptr, 0, if size == 0 { 1 } else { size });
+    let addr = ptr as u32;
+    if addr <= 8 {
+        // sentinel or reserved-page pointer — nothing to deallocate
+        return;
     }
+    if let Some(size) = ALLOC_SIZES.with(|m| m.borrow_mut().remove(&addr)) {
+        if size > 0 {
+            unsafe {
+                let layout = std::alloc::Layout::from_size_align_unchecked(size as usize, 1);
+                std::alloc::dealloc(ptr, layout);
+            }
+        }
+    }
+    // If addr not in ALLOC_SIZES, it was never allocated through our _malloc
+    // (e.g. a wasm-bindgen internal pointer). Silently ignore.
 }
 
 // ── Session Management ───────────────────────────────────────────────────────
@@ -554,7 +607,6 @@ pub fn C_GenerateKeyPair(
 ) -> u32 {
     unsafe {
         let mech_type = *(p_mechanism as *const u32);
-
         match mech_type {
             CKM_ML_KEM_KEY_PAIR_GEN => {
                 use ml_kem::{EncodedSizeUser, KemCore};
@@ -766,14 +818,18 @@ pub fn C_GenerateKeyPair(
                     let sk = p384::ecdsa::SigningKey::random(&mut rng);
                     let vk = p384::ecdsa::VerifyingKey::from(&sk);
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
-                    pub_attrs.insert(CKA_VALUE, vk.to_encoded_point(false).as_bytes().to_vec());
+                    let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
+                    pub_attrs.insert(CKA_VALUE, vk_bytes.clone());
+                    pub_attrs.insert(CKA_EC_POINT, vk_bytes);
                 } else {
                     store_param_set(&mut pub_attrs, CURVE_P256);
                     store_param_set(&mut prv_attrs, CURVE_P256);
                     let sk = p256::ecdsa::SigningKey::random(&mut rng);
                     let vk = p256::ecdsa::VerifyingKey::from(&sk);
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
-                    pub_attrs.insert(CKA_VALUE, vk.to_encoded_point(false).as_bytes().to_vec());
+                    let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
+                    pub_attrs.insert(CKA_VALUE, vk_bytes.clone());
+                    pub_attrs.insert(CKA_EC_POINT, vk_bytes);
                 }
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -2092,7 +2148,7 @@ pub fn C_GenerateRandom(_h_session: u32, p_random_data: *mut u8, ul_random_len: 
     }
 }
 
-// ── DeriveKey (ECDH) ────────────────────────────────────────────────────────
+// ── DeriveKey (ECDH, PBKDF2, HKDF, KBKDF) ──────────────────────────────────
 
 #[wasm_bindgen(js_name = _C_DeriveKey)]
 pub fn C_DeriveKey(
@@ -2108,84 +2164,295 @@ pub fn C_DeriveKey(
             return CKR_ARGUMENTS_BAD;
         }
         let mech_type = *(p_mechanism as *const u32);
-        if mech_type != CKM_ECDH1_DERIVE {
-            return CKR_MECHANISM_INVALID;
-        }
+        let key_len = get_attr_ulong(p_template, ul_attribute_count, CKA_VALUE_LEN).unwrap_or(32) as usize;
 
-        let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
-        if p_param.is_null() {
-            return CKR_ARGUMENTS_BAD;
-        }
-
-        let peer_pk_ptr = *p_param.add(3) as usize as *const u8;
-        let peer_pk_len = *p_param.add(4) as usize;
-        if peer_pk_ptr.is_null() || peer_pk_len == 0 {
-            return CKR_ARGUMENTS_BAD;
-        }
-
-        let peer_pk_bytes = std::slice::from_raw_parts(peer_pk_ptr, peer_pk_len);
-        let our_sk_bytes = match get_object_value(h_base_key) {
-            Some(v) => v,
-            None => return CKR_ARGUMENTS_BAD,
-        };
-
-        let algo = get_object_algo_family(h_base_key);
-        let curve = get_object_param_set(h_base_key);
-
-        let shared_secret = match (algo, curve) {
-            (ALGO_ECDSA, CURVE_P256) | (ALGO_ECDH_P256, _) | (0, CURVE_P256) => {
-                let sk = match p256::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
-                    Ok(s) => s,
-                    Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
-                };
-                let peer_pk = match p256::PublicKey::from_sec1_bytes(peer_pk_bytes) {
-                    Ok(pk) => pk,
-                    Err(_) => return CKR_ARGUMENTS_BAD,
-                };
-                p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
-                    .raw_secret_bytes()
-                    .to_vec()
-            }
-            (ALGO_ECDH_X25519, _) => {
-                if our_sk_bytes.len() != 32 || peer_pk_bytes.len() != 32 {
-                    return CKR_KEY_TYPE_INCONSISTENT;
+        let key_value: Vec<u8> = match mech_type {
+            // ── ECDH ────────────────────────────────────────────────────────
+            CKM_ECDH1_DERIVE | CKM_ECDH1_COFACTOR_DERIVE => {
+                let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+                if p_param.is_null() {
+                    return CKR_ARGUMENTS_BAD;
                 }
-                let mut sk_arr = [0u8; 32];
-                sk_arr.copy_from_slice(&our_sk_bytes);
-                let sk = x25519_dalek::StaticSecret::from(sk_arr);
-                let mut pk_arr = [0u8; 32];
-                pk_arr.copy_from_slice(peer_pk_bytes);
-                sk.diffie_hellman(&x25519_dalek::PublicKey::from(pk_arr))
-                    .as_bytes()
-                    .to_vec()
-            }
-            _ => {
-                // Default: try P-256 based on key size
-                if our_sk_bytes.len() == 32 && peer_pk_bytes.len() == 65 {
-                    let sk = match p256::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
-                        Ok(s) => s,
-                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
-                    };
-                    let peer_pk = match p256::PublicKey::from_sec1_bytes(peer_pk_bytes) {
-                        Ok(pk) => pk,
-                        Err(_) => return CKR_ARGUMENTS_BAD,
-                    };
-                    p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
-                        .raw_secret_bytes()
-                        .to_vec()
+                // CK_ECDH1_DERIVE_PARAMS: [kdf, ulSharedDataLen, pSharedData, ulPublicDataLen, pPublicData]
+                let peer_pk_len = *p_param.add(3) as usize;
+                let peer_pk_ptr = *p_param.add(4) as usize as *const u8;
+                if peer_pk_ptr.is_null() || peer_pk_len == 0 {
+                    return CKR_ARGUMENTS_BAD;
+                }
+                let peer_pk_bytes = std::slice::from_raw_parts(peer_pk_ptr, peer_pk_len);
+                let our_sk_bytes = match get_object_value(h_base_key) {
+                    Some(v) => v,
+                    None => return CKR_ARGUMENTS_BAD,
+                };
+                let algo = get_object_algo_family(h_base_key);
+                let curve = get_object_param_set(h_base_key);
+                let shared = match (algo, curve) {
+                    (ALGO_ECDSA, CURVE_P256) | (ALGO_ECDH_P256, _) | (0, CURVE_P256) => {
+                        let sk = match p256::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
+                            Ok(s) => s,
+                            Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                        };
+                        let peer_pk = match p256::PublicKey::from_sec1_bytes(peer_pk_bytes) {
+                            Ok(pk) => pk,
+                            Err(_) => return CKR_ARGUMENTS_BAD,
+                        };
+                        p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
+                            .raw_secret_bytes()
+                            .to_vec()
+                    }
+                    (ALGO_ECDH_X25519, _) => {
+                        if our_sk_bytes.len() != 32 || peer_pk_bytes.len() != 32 {
+                            return CKR_KEY_TYPE_INCONSISTENT;
+                        }
+                        let mut sk_arr = [0u8; 32];
+                        sk_arr.copy_from_slice(&our_sk_bytes);
+                        let sk = x25519_dalek::StaticSecret::from(sk_arr);
+                        let mut pk_arr = [0u8; 32];
+                        pk_arr.copy_from_slice(peer_pk_bytes);
+                        sk.diffie_hellman(&x25519_dalek::PublicKey::from(pk_arr))
+                            .as_bytes()
+                            .to_vec()
+                    }
+                    _ => {
+                        if our_sk_bytes.len() == 32 && peer_pk_bytes.len() == 65 {
+                            let sk = match p256::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
+                                Ok(s) => s,
+                                Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                            };
+                            let peer_pk = match p256::PublicKey::from_sec1_bytes(peer_pk_bytes) {
+                                Ok(pk) => pk,
+                                Err(_) => return CKR_ARGUMENTS_BAD,
+                            };
+                            p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
+                                .raw_secret_bytes()
+                                .to_vec()
+                        } else {
+                            return CKR_KEY_TYPE_INCONSISTENT;
+                        }
+                    }
+                };
+                if key_len <= shared.len() {
+                    shared[..key_len].to_vec()
                 } else {
-                    return CKR_KEY_TYPE_INCONSISTENT;
+                    shared
                 }
             }
+
+            // ── PBKDF2 ──────────────────────────────────────────────────────
+            CKM_PKCS5_PBKD2 => {
+                let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+                if p_param.is_null() {
+                    return CKR_ARGUMENTS_BAD;
+                }
+                // CK_PKCS5_PBKD2_PARAMS2: [saltSource, pSaltData, ulSaltDataLen, iterations, prf,
+                //                           pPrfData, ulPrfDataLen, pPassword, ulPasswordLen]
+                let salt_ptr = *p_param.add(1) as usize as *const u8;
+                let salt_len = *p_param.add(2) as usize;
+                let iterations = *p_param.add(3);
+                let prf = *p_param.add(4);
+                let pass_ptr = *p_param.add(7) as usize as *const u8;
+                let pass_len = *p_param.add(8) as usize;
+                let salt = if !salt_ptr.is_null() && salt_len > 0 {
+                    std::slice::from_raw_parts(salt_ptr, salt_len)
+                } else {
+                    &[]
+                };
+                let pass = if !pass_ptr.is_null() && pass_len > 0 {
+                    std::slice::from_raw_parts(pass_ptr, pass_len)
+                } else {
+                    &[]
+                };
+                let mut out = vec![0u8; key_len];
+                match prf {
+                    CKP_PBKDF2_HMAC_SHA256 => pbkdf2::pbkdf2_hmac::<sha2::Sha256>(pass, salt, iterations, &mut out),
+                    CKP_PBKDF2_HMAC_SHA384 => pbkdf2::pbkdf2_hmac::<sha2::Sha384>(pass, salt, iterations, &mut out),
+                    _ => pbkdf2::pbkdf2_hmac::<sha2::Sha512>(pass, salt, iterations, &mut out), // SHA-512 default
+                }
+                out
+            }
+
+            // ── HKDF ────────────────────────────────────────────────────────
+            CKM_HKDF_DERIVE => {
+                let ikm = match get_object_value(h_base_key) {
+                    Some(v) => v,
+                    None => return CKR_ARGUMENTS_BAD,
+                };
+                let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+                if p_param.is_null() {
+                    return CKR_ARGUMENTS_BAD;
+                }
+                // CK_HKDF_PARAMS: bExtract(b0), bExpand(b1), pad(b2-3), prf(4), saltType(8),
+                //                  pSalt(12), ulSaltLen(16), hSaltKey(20), pInfo(24), ulInfoLen(28)
+                let first_word = *p_param.add(0);
+                let b_expand = ((first_word >> 8) & 0xFF) != 0;
+                let prf = *p_param.add(1);
+                let salt_type = *p_param.add(2);
+                let salt_ptr = *p_param.add(3) as usize as *const u8;
+                let salt_len = *p_param.add(4) as usize;
+                let info_ptr = *p_param.add(6) as usize as *const u8;
+                let info_len = *p_param.add(7) as usize;
+                let salt_opt = if salt_type == CKF_HKDF_SALT_DATA && !salt_ptr.is_null() && salt_len > 0 {
+                    Some(std::slice::from_raw_parts(salt_ptr, salt_len))
+                } else {
+                    None
+                };
+                let info = if !info_ptr.is_null() && info_len > 0 {
+                    std::slice::from_raw_parts(info_ptr, info_len)
+                } else {
+                    &[]
+                };
+                let mut out = vec![0u8; key_len];
+                if b_expand {
+                    match prf {
+                        CKM_SHA384 => {
+                            let hk = hkdf::Hkdf::<sha2::Sha384>::new(salt_opt, &ikm);
+                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                        }
+                        CKM_SHA512 => {
+                            let hk = hkdf::Hkdf::<sha2::Sha512>::new(salt_opt, &ikm);
+                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                        }
+                        CKM_SHA3_256 => {
+                            let hk = hkdf::Hkdf::<sha3::Sha3_256>::new(salt_opt, &ikm);
+                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                        }
+                        CKM_SHA3_512 => {
+                            let hk = hkdf::Hkdf::<sha3::Sha3_512>::new(salt_opt, &ikm);
+                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                        }
+                        _ => { // CKM_SHA256 default
+                            let hk = hkdf::Hkdf::<sha2::Sha256>::new(salt_opt, &ikm);
+                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                        }
+                    }
+                } else {
+                    // extract-only: write PRK to output
+                    let (prk, _) = hkdf::Hkdf::<sha2::Sha256>::extract(salt_opt, &ikm);
+                    let copy_len = key_len.min(prk.len());
+                    out[..copy_len].copy_from_slice(&prk[..copy_len]);
+                }
+                out
+            }
+
+            // ── SP 800-108 Counter KBKDF ─────────────────────────────────────
+            CKM_SP800_108_COUNTER_KDF => {
+                use hmac::{Hmac, Mac};
+                let base_key = match get_object_value(h_base_key) {
+                    Some(v) => v,
+                    None => return CKR_ARGUMENTS_BAD,
+                };
+                let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+                if p_param.is_null() {
+                    return CKR_ARGUMENTS_BAD;
+                }
+                let prf_type = *p_param.add(0);
+                let num_segs = *p_param.add(1) as usize;
+                let p_segs = *p_param.add(2) as usize as *const u32;
+                // Collect fixed input from BYTE_ARRAY segments
+                let mut fixed: Vec<u8> = Vec::new();
+                if !p_segs.is_null() {
+                    for i in 0..num_segs {
+                        let seg_type = *p_segs.add(i * 3);
+                        if seg_type == CK_SP800_108_BYTE_ARRAY {
+                            let val_ptr = *p_segs.add(i * 3 + 1) as usize as *const u8;
+                            let val_len = *p_segs.add(i * 3 + 2) as usize;
+                            if !val_ptr.is_null() && val_len > 0 {
+                                fixed.extend_from_slice(std::slice::from_raw_parts(val_ptr, val_len));
+                            }
+                        }
+                    }
+                }
+                // K(i) = PRF(base_key, counter_be32 || fixed_input)
+                macro_rules! kbkdf_counter {
+                    ($HmacType:ty, $block_size:expr) => {{
+                        let mut out = Vec::new();
+                        let mut counter: u32 = 1;
+                        while out.len() < key_len {
+                            let mut mac = <$HmacType>::new_from_slice(&base_key)
+                                .map_err(|_| CKR_FUNCTION_FAILED)
+                                .unwrap();
+                            mac.update(&counter.to_be_bytes());
+                            mac.update(&fixed);
+                            out.extend_from_slice(&mac.finalize().into_bytes());
+                            counter += 1;
+                        }
+                        out.truncate(key_len);
+                        out
+                    }};
+                }
+                match prf_type {
+                    CKM_SHA384 => kbkdf_counter!(Hmac<sha2::Sha384>, 48),
+                    CKM_SHA512 => kbkdf_counter!(Hmac<sha2::Sha512>, 64),
+                    CKM_SHA3_256 => kbkdf_counter!(Hmac<sha3::Sha3_256>, 32),
+                    CKM_SHA3_512 => kbkdf_counter!(Hmac<sha3::Sha3_512>, 64),
+                    _ => kbkdf_counter!(Hmac<sha2::Sha256>, 32), // SHA-256 default
+                }
+            }
+
+            // ── SP 800-108 Feedback KBKDF ────────────────────────────────────
+            CKM_SP800_108_FEEDBACK_KDF => {
+                use hmac::{Hmac, Mac};
+                let base_key = match get_object_value(h_base_key) {
+                    Some(v) => v,
+                    None => return CKR_ARGUMENTS_BAD,
+                };
+                let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+                if p_param.is_null() {
+                    return CKR_ARGUMENTS_BAD;
+                }
+                let prf_type = *p_param.add(0);
+                let num_segs = *p_param.add(1) as usize;
+                let p_segs = *p_param.add(2) as usize as *const u32;
+                let iv_len = *p_param.add(3) as usize;
+                let iv_ptr = *p_param.add(4) as usize as *const u8;
+                let iv = if !iv_ptr.is_null() && iv_len > 0 {
+                    std::slice::from_raw_parts(iv_ptr, iv_len).to_vec()
+                } else {
+                    Vec::new()
+                };
+                let mut fixed: Vec<u8> = Vec::new();
+                if !p_segs.is_null() {
+                    for i in 0..num_segs {
+                        let seg_type = *p_segs.add(i * 3);
+                        if seg_type == CK_SP800_108_BYTE_ARRAY {
+                            let val_ptr = *p_segs.add(i * 3 + 1) as usize as *const u8;
+                            let val_len = *p_segs.add(i * 3 + 2) as usize;
+                            if !val_ptr.is_null() && val_len > 0 {
+                                fixed.extend_from_slice(std::slice::from_raw_parts(val_ptr, val_len));
+                            }
+                        }
+                    }
+                }
+                // K(i) = PRF(base_key, K(i-1) || fixed_input)
+                macro_rules! kbkdf_feedback {
+                    ($HmacType:ty) => {{
+                        let mut k_prev = iv.clone();
+                        let mut out = Vec::new();
+                        while out.len() < key_len {
+                            let mut mac = <$HmacType>::new_from_slice(&base_key)
+                                .map_err(|_| CKR_FUNCTION_FAILED)
+                                .unwrap();
+                            mac.update(&k_prev);
+                            mac.update(&fixed);
+                            k_prev = mac.finalize().into_bytes().to_vec();
+                            out.extend_from_slice(&k_prev);
+                        }
+                        out.truncate(key_len);
+                        out
+                    }};
+                }
+                match prf_type {
+                    CKM_SHA384 => kbkdf_feedback!(Hmac<sha2::Sha384>),
+                    CKM_SHA512 => kbkdf_feedback!(Hmac<sha2::Sha512>),
+                    CKM_SHA3_256 => kbkdf_feedback!(Hmac<sha3::Sha3_256>),
+                    CKM_SHA3_512 => kbkdf_feedback!(Hmac<sha3::Sha3_512>),
+                    _ => kbkdf_feedback!(Hmac<sha2::Sha256>),
+                }
+            }
+
+            _ => return CKR_MECHANISM_INVALID,
         };
 
-        let key_len = get_attr_ulong(p_template, ul_attribute_count, CKA_VALUE_LEN)
-            .unwrap_or(shared_secret.len() as u32) as usize;
-        let key_value = if key_len <= shared_secret.len() {
-            shared_secret[..key_len].to_vec()
-        } else {
-            shared_secret
-        };
         let mut attrs = HashMap::new();
         attrs.insert(CKA_VALUE, key_value);
         *ph_key = allocate_handle(attrs);
