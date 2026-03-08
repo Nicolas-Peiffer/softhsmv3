@@ -907,80 +907,78 @@ CK_RV SoftHSM::C_WrapKey
 	else
 	{
 		CK_KEY_TYPE keyType = key->getUnsignedLongValue(CKA_KEY_TYPE, CKK_VENDOR_DEFINED);
-		AsymAlgo::Type alg = AsymAlgo::Unknown;
-		switch (keyType) {
-			case CKK_RSA:
-				alg = AsymAlgo::RSA;
-				break;
+
+		// PQC key types: read CKA_VALUE directly — the stored value is
+		// already the serialised key material.  This avoids the
+		// newPrivateKey → PKCS8Encode() round-trip which can fail in
+		// the WASM build when OpenSSL cannot re-encode PQC keys.
+		if (keyType == CKK_ML_KEM || keyType == CKK_ML_DSA || keyType == CKK_SLH_DSA)
+		{
+			if (isKeyPrivate)
+			{
+				bool bOK = token->decrypt(key->getByteStringValue(CKA_VALUE), keydata);
+				if (!bOK) return CKR_GENERAL_ERROR;
+			}
+			else
+			{
+				keydata = key->getByteStringValue(CKA_VALUE);
+			}
+		}
+		else
+		{
+			// Classical key types: use PKCS#8 encoding
+			AsymAlgo::Type alg = AsymAlgo::Unknown;
+			switch (keyType) {
+				case CKK_RSA:
+					alg = AsymAlgo::RSA;
+					break;
 #ifdef WITH_ECC
-			case CKK_EC:
-				// can be ecdh too but it doesn't matter
-				alg = AsymAlgo::ECDSA;
-				break;
+				case CKK_EC:
+					alg = AsymAlgo::ECDSA;
+					break;
 #endif
 #ifdef WITH_EDDSA
-                        case CKK_EC_EDWARDS:
-			        alg = AsymAlgo::EDDSA;
-				break;
+				case CKK_EC_EDWARDS:
+					alg = AsymAlgo::EDDSA;
+					break;
 #endif
-			case CKK_ML_DSA:
-				alg = AsymAlgo::MLDSA;
-				break;
-			case CKK_ML_KEM:
-				alg = AsymAlgo::MLKEM;
-				break;
-			case CKK_SLH_DSA:
-				alg = AsymAlgo::SLHDSA;
-				break;
-			default:
-				return CKR_KEY_NOT_WRAPPABLE;
-		}
-		AsymmetricAlgorithm* asymCrypto = NULL;
-		PrivateKey* privateKey = NULL;
-		asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(alg);
-		if (asymCrypto == NULL)
-			return CKR_GENERAL_ERROR;
-		privateKey = asymCrypto->newPrivateKey();
-		if (privateKey == NULL)
-		{
-			CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
-			return CKR_HOST_MEMORY;
-		}
-		switch (keyType) {
-			case CKK_RSA:
-				rv = getRSAPrivateKey((RSAPrivateKey*)privateKey, token, key);
-				break;
-				break;
-				break;
+				default:
+					return CKR_KEY_NOT_WRAPPABLE;
+			}
+			AsymmetricAlgorithm* asymCrypto = CryptoFactory::i()->getAsymmetricAlgorithm(alg);
+			if (asymCrypto == NULL)
+				return CKR_GENERAL_ERROR;
+			PrivateKey* privateKey = asymCrypto->newPrivateKey();
+			if (privateKey == NULL)
+			{
+				CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
+				return CKR_HOST_MEMORY;
+			}
+			switch (keyType) {
+				case CKK_RSA:
+					rv = getRSAPrivateKey((RSAPrivateKey*)privateKey, token, key);
+					break;
 #ifdef WITH_ECC
-			case CKK_EC:
-				rv = getECPrivateKey((ECPrivateKey*)privateKey, token, key);
-				break;
+				case CKK_EC:
+					rv = getECPrivateKey((ECPrivateKey*)privateKey, token, key);
+					break;
 #endif
 #ifdef WITH_EDDSA
-                        case CKK_EC_EDWARDS:
-				rv = getEDPrivateKey((EDPrivateKey*)privateKey, token, key);
-				break;
+				case CKK_EC_EDWARDS:
+					rv = getEDPrivateKey((EDPrivateKey*)privateKey, token, key);
+					break;
 #endif
-			case CKK_ML_DSA:
-				rv = getMLDSAPrivateKey((MLDSAPrivateKey*)privateKey, token, key);
-				break;
-			case CKK_ML_KEM:
-				rv = getMLKEMPrivateKey((MLKEMPrivateKey*)privateKey, token, key);
-				break;
-			case CKK_SLH_DSA:
-				rv = getSLHDSAPrivateKey((SLHDSAPrivateKey*)privateKey, token, key);
-				break;
-		}
-		if (rv != CKR_OK)
-		{
+			}
+			if (rv != CKR_OK)
+			{
+				asymCrypto->recyclePrivateKey(privateKey);
+				CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
+				return CKR_GENERAL_ERROR;
+			}
+			keydata = privateKey->PKCS8Encode();
 			asymCrypto->recyclePrivateKey(privateKey);
 			CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
-			return CKR_GENERAL_ERROR;
 		}
-		keydata = privateKey->PKCS8Encode();
-		asymCrypto->recyclePrivateKey(privateKey);
-		CryptoFactory::i()->recycleAsymmetricAlgorithm(asymCrypto);
 	}
 	if (keydata.size() == 0)
 		return CKR_KEY_NOT_WRAPPABLE;
@@ -1683,8 +1681,11 @@ CK_RV SoftHSM::C_WrapKeyAuthenticated
 	// Validate key-to-be-wrapped
 	OSObject* key = (OSObject*)handleManager->getObject(hKey);
 	if (key == NULL_PTR || !key->isValid()) return CKR_KEY_HANDLE_INVALID;
-	if (key->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED) != CKO_SECRET_KEY)
-		return CKR_KEY_NOT_WRAPPABLE; // private-key PKCS8 wrapping not yet implemented
+	{
+		CK_OBJECT_CLASS kc = key->getUnsignedLongValue(CKA_CLASS, CKO_VENDOR_DEFINED);
+		if (kc != CKO_SECRET_KEY && kc != CKO_PRIVATE_KEY)
+			return CKR_KEY_NOT_WRAPPABLE;
+	}
 	if (key->getBooleanValue(CKA_EXTRACTABLE, false) == false) return CKR_KEY_UNEXTRACTABLE;
 	if (key->getBooleanValue(CKA_WRAP_WITH_TRUSTED, false) &&
 	    wrapKey->getBooleanValue(CKA_TRUSTED, false) == false)
@@ -6167,6 +6168,9 @@ CK_RV SoftHSM::generateMLKEM
 				CK_ULONG ulKeyGenMechanism = (CK_ULONG)CKM_ML_KEM_KEY_PAIR_GEN;
 				bOK = bOK && osobject->setAttribute(CKA_KEY_GEN_MECHANISM, ulKeyGenMechanism);
 
+				// PKCS#11 v3.2: C_GenerateKeyPair sets CKA_ENCAPSULATE=true for public key
+				bOK = bOK && osobject->setAttribute(CKA_ENCAPSULATE, true);
+
 				// ML-KEM Public Key Attributes
 				bOK = bOK && osobject->setAttribute(CKA_PARAMETER_SET, (unsigned long)pub->getParameterSet());
 				ByteString pubValue;
@@ -6238,6 +6242,9 @@ CK_RV SoftHSM::generateMLKEM
 				bOK = bOK && osobject->setAttribute(CKA_LOCAL, true);
 				CK_ULONG ulKeyGenMechanism = (CK_ULONG)CKM_ML_KEM_KEY_PAIR_GEN;
 				bOK = bOK && osobject->setAttribute(CKA_KEY_GEN_MECHANISM, ulKeyGenMechanism);
+
+				// PKCS#11 v3.2: C_GenerateKeyPair sets CKA_DECAPSULATE=true for private key
+				bOK = bOK && osobject->setAttribute(CKA_DECAPSULATE, true);
 
 				bool bAlwaysSensitive = osobject->getBooleanValue(CKA_SENSITIVE, false);
 				bOK = bOK && osobject->setAttribute(CKA_ALWAYS_SENSITIVE, bAlwaysSensitive);

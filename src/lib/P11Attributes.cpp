@@ -2495,9 +2495,11 @@ CK_RV P11AttrAllowedMechanisms::updateAttr(Token* /*token*/, bool /*isPrivate*/,
  *****************************************/
 
 // Set default value
+// PKCS#11 v3.2 Table 18: CKA_ENCAPSULATE defaults to false for C_CreateObject;
+// C_GenerateKeyPair sets it to true explicitly in the key template.
 bool P11AttrEncapsulate::setDefault()
 {
-	OSAttribute attr(true);
+	OSAttribute attr(false);
 	return osobject->setAttribute(type, attr);
 }
 
@@ -2529,9 +2531,11 @@ CK_RV P11AttrEncapsulate::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VO
  *****************************************/
 
 // Set default value
+// PKCS#11 v3.2 Table 18: CKA_DECAPSULATE defaults to false for C_CreateObject;
+// C_GenerateKeyPair sets it to true explicitly in the key template.
 bool P11AttrDecapsulate::setDefault()
 {
-	OSAttribute attr(true);
+	OSAttribute attr(false);
 	return osobject->setAttribute(type, attr);
 }
 

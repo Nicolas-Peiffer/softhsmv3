@@ -259,12 +259,12 @@ Memory management (`_malloc`, `_free`), `HEAPU8`, `setValue`, and `getValue` are
 
 ### Supported PKCS#11 Functions
 
-The Rust engine implements 48 PKCS#11 functions:
+The Rust engine exports 63 PKCS#11 functions (47 fully implemented, 8 multi-part stubs, 8 admin stubs):
 
 | Category | Functions |
 | --- | --- |
-| Session | `C_Initialize`, `C_Finalize`, `C_GetSlotList`, `C_InitToken`, `C_OpenSession`, `C_CloseSession`, `C_Login`, `C_Logout`, `C_InitPIN`, `C_GetSessionInfo`, `C_GetTokenInfo` |
-| Mechanism | `C_GetMechanismList`, `C_GetMechanismInfo` |
+| Info / Slot | `C_GetInfo`, `C_GetSlotList`, `C_GetSlotInfo`, `C_GetTokenInfo`, `C_GetMechanismList`, `C_GetMechanismInfo` |
+| Session | `C_Initialize`, `C_Finalize`, `C_InitToken`, `C_OpenSession`, `C_CloseSession`, `C_Login`, `C_Logout`, `C_InitPIN`, `C_GetSessionInfo` |
 | Key Generation | `C_GenerateKeyPair`, `C_GenerateKey` |
 | KEM | `C_EncapsulateKey`, `C_DecapsulateKey` |
 | Sign/Verify | `C_SignInit`, `C_Sign`, `C_VerifyInit`, `C_Verify` |
@@ -274,6 +274,10 @@ The Rust engine implements 48 PKCS#11 functions:
 | Object | `C_CreateObject`, `C_DestroyObject`, `C_GetAttributeValue`, `C_FindObjectsInit`, `C_FindObjects`, `C_FindObjectsFinal` |
 | Key Management | `C_DeriveKey`, `C_WrapKey`, `C_UnwrapKey` |
 | Utility | `C_GenerateRandom` |
+| Multi-part (stubs) | `C_SignUpdate`, `C_SignFinal`, `C_VerifyUpdate`, `C_VerifyFinal`, `C_EncryptUpdate`, `C_EncryptFinal`, `C_DecryptUpdate`, `C_DecryptFinal` |
+| Admin (stubs) | `C_SetPIN`, `C_CopyObject`, `C_GetObjectSize`, `C_SetAttributeValue`, `C_DigestKey`, `C_GetOperationState`, `C_SetOperationState`, `C_SeedRandom` |
+
+Multi-part and admin stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The browser playground uses single-shot operations only.
 
 ### Supported Algorithms
 
@@ -286,13 +290,33 @@ The Rust engine implements 48 PKCS#11 functions:
 **Classical:**
 
 - RSA (PKCS#1 v1.5, OAEP, PSS — keygen + sign/verify)
-- ECDSA P-256/P-384 (keygen, sign, verify)
+- ECDSA P-256/P-384 (keygen, sign, verify) — including ECDSA-SHA3-224/256/384/512
 - Ed25519 (keygen, sign, verify)
 - ECDH P-256 + X25519 (key agreement via `C_DeriveKey`)
-- AES-128/192/256 (GCM, CBC-PAD, Key Wrap)
+- AES-128/256 (GCM, CBC-PAD, CTR, Key Wrap, Key Wrap with Padding)
 - SHA-256/384/512, SHA3-256/512 (digest)
 - HMAC-SHA256/384/512, HMAC-SHA3-256/512
-- HKDF (RFC 5869)
+- HKDF (RFC 5869), PBKDF2, SP 800-108 Counter/Feedback KDF
+
+**62 mechanisms** registered in `C_GetMechanismList` — 100% have implementations.
+
+### PKCS#11 v3.2 Compliance Enforcement
+
+The Rust engine enforces PKCS#11 v3.2 capability attributes on all operations:
+
+| Check | Return Code | Enforcement Point |
+| --- | --- | --- |
+| `CKA_SIGN` on private key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_SignInit` |
+| `CKA_VERIFY` on public key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_VerifyInit` |
+| `CKA_ENCRYPT` on key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_EncryptInit` |
+| `CKA_DECRYPT` on key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_DecryptInit` |
+| `CKA_WRAP` on wrapping key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_WrapKey` |
+| `CKA_UNWRAP` on unwrapping key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_UnwrapKey` |
+| `CKA_DERIVE` on base key | `CKR_KEY_FUNCTION_NOT_PERMITTED` | `C_DeriveKey` |
+| `CKA_EXTRACTABLE` on wrapped key | `CKR_KEY_UNEXTRACTABLE` | `C_WrapKey` |
+| `CKA_SENSITIVE` / `!CKA_EXTRACTABLE` | `CK_UNAVAILABLE_INFORMATION` | `C_GetAttributeValue` (blocks `CKA_VALUE`) |
+
+Generated private keys default to `CKA_SENSITIVE=true`. `C_DestroyObject` cleans up stale operation state to prevent use-after-free on destroyed keys.
 
 ### Rust Crate Dependencies
 
@@ -357,7 +381,7 @@ The parity test (`tests/parity-wasm.mjs`) performs cross-engine verification:
 rust/
   Cargo.toml           # Dependencies, wasm-pack config, release profile
   src/
-    lib.rs             # All PKCS#11 functions (~2,300 lines)
+    lib.rs             # All PKCS#11 functions (~3,900 lines)
   pkg/                 # wasm-pack output (generated)
     softhsmrustv3_bg.wasm
     softhsmrustv3.js
@@ -370,7 +394,7 @@ tests/
 softhsmrustv3design.md  # Detailed architecture design document
 ```
 
-Internal state uses thread-local `RefCell<HashMap<u32, Vec<u8>>>` for the object store, with integer handles returned to JS callers. All cryptographic operations execute entirely within WASM linear memory, isolated from the JavaScript heap.
+Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` for the object store (handle → attribute map), with monotonically incrementing `AtomicU32` handles returned to JS callers. Session handles are also unique via an atomic counter. All cryptographic operations execute entirely within WASM linear memory, isolated from the JavaScript heap.
 
 ## Known Limitations
 
@@ -406,6 +430,13 @@ Internal state uses thread-local `RefCell<HashMap<u32, Vec<u8>>>` for the object
   - [x] `CKM_SP800_108_COUNTER_KDF` / `CKM_SP800_108_FEEDBACK_KDF` — NIST SP 800-108 counter and feedback KBKDF
   - [x] `CKM_ECDH1_COFACTOR_DERIVE` — cofactor ECDH via `EVP_PKEY_CTX_set_ecdh_cofactor_mode`
 - [x] Phase 8: Pure-Rust WASM engine (`rust/`) — drop-in parity with C++ Emscripten build
+- [x] Phase 9: PKCS#11 v3.2 compliance audit — C++ and Rust engines
+  - [x] C++: `CKA_ENCAPSULATE`/`CKA_DECAPSULATE` defaults fixed (Table 18); explicit set in `C_GenerateKeyPair`
+  - [x] Rust: `SUPPORTED_MECHS` expanded 31→62; `CKA_SIGN/VERIFY/ENCRYPT/DECRYPT` enforcement in `*Init`
+  - [x] Rust: `AtomicU32` unique session handles; `CKA_SENSITIVE=true` for private keys
+  - [x] Rust: `C_DestroyObject` state cleanup; `C_DeriveKey` `CKA_DERIVE` check
+  - [x] Rust: output keys from KEM/derive carry proper attributes (`CKA_EXTRACTABLE`, `CKA_CLASS`, etc.)
+  - [x] Rust: 10 admin function stubs + 8 multi-part stubs (63 total exports)
 
 ## Building (Native)
 
