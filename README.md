@@ -2,7 +2,7 @@
 
 A modernized fork of [SoftHSM2](https://github.com/softhsm/SoftHSMv2) with **OpenSSL 3.x**, **PKCS#11 v3.2**, and **post-quantum cryptography** support — compiled to WebAssembly for use in browsers and Node.js.
 
-SoftHSMv3 ships two WASM engines with identical PKCS#11 APIs: a **C++/Emscripten** engine (OpenSSL 3.6 backend) and a **pure-Rust** engine (RustCrypto backend, ~336 KB). Both produce the same `_C_*` function exports and are drop-in interchangeable.
+SoftHSMv3 ships two WASM engines with identical PKCS#11 APIs: a **C++/Emscripten** engine (OpenSSL 3.6 backend) and a **pure-Rust** engine (RustCrypto backend, ~1.3 MB). Both produce the same `_C_*` function exports and are drop-in interchangeable.
 
 ## Installation
 
@@ -230,7 +230,7 @@ CKM_ECDH1_COFACTOR_DERIVE  = 0x00001051
 
 ## Rust WASM Engine (`rust/`)
 
-The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface, compiled to `wasm32-unknown-unknown` via `wasm-bindgen`. It replaces the entire OpenSSL backend with native RustCrypto crates, producing a standalone ~336 KB `.wasm` binary with zero C dependencies.
+The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface, compiled to `wasm32-unknown-unknown` via `wasm-bindgen`. It replaces the entire OpenSSL backend with native RustCrypto crates, producing a standalone ~1.3 MB `.wasm` binary with zero C dependencies.
 
 ### Why Two Engines?
 
@@ -238,9 +238,9 @@ The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface
 | --- | --- | --- |
 | Crypto backend | OpenSSL 3.6 (EVP) | RustCrypto (`ml-kem`, `ml-dsa`, `slh-dsa`, `rsa`, `p256`, `p384`, `aes`, `sha2`, `sha3`) |
 | Build toolchain | Emscripten SDK + CMake + cross-compiled OpenSSL | `cargo build --target wasm32-unknown-unknown` |
-| WASM size | ~2 MB+ (OpenSSL linked) | **~336 KB** |
+| WASM size | ~2 MB+ (OpenSSL linked) | **~1.3 MB** |
 | C FFI | Native | None (pure Rust) |
-| Pre-hash ML-DSA/SLH-DSA | Full (10 variants each) | Pure mode only (pre-hash planned) |
+| Pre-hash ML-DSA/SLH-DSA | Full (10 variants each) | Full (10 variants each) |
 
 ### API Parity — The "Disguise" Technique
 
@@ -324,7 +324,7 @@ cd rust
 wasm-pack build --target web --release
 
 # Output: rust/pkg/
-#   softhsmrustv3_bg.wasm  (~336 KB)
+#   softhsmrustv3_bg.wasm  (~1.3 MB)
 #   softhsmrustv3.js       (JS bindings)
 #   softhsmrustv3.d.ts     (TypeScript types)
 ```
@@ -357,7 +357,7 @@ The parity test (`tests/parity-wasm.mjs`) performs cross-engine verification:
 rust/
   Cargo.toml           # Dependencies, wasm-pack config, release profile
   src/
-    lib.rs             # All PKCS#11 functions (~1,724 lines)
+    lib.rs             # All PKCS#11 functions (~2,300 lines)
   pkg/                 # wasm-pack output (generated)
     softhsmrustv3_bg.wasm
     softhsmrustv3.js
