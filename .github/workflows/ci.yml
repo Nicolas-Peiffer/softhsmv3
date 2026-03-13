@@ -10,6 +10,9 @@ jobs:
   build:
     name: Build & Test (Ubuntu 24.04 / OpenSSL 3.3)
     runs-on: ubuntu-24.04
+    env:
+      PKG_CONFIG_PATH: /opt/openssl-3.6/lib64/pkgconfig:/opt/openssl-3.6/lib/pkgconfig
+      LD_LIBRARY_PATH: /opt/openssl-3.6/lib64:/opt/openssl-3.6/lib
 
     steps:
       - uses: actions/checkout@v4
@@ -40,9 +43,7 @@ jobs:
           make install
 
       - name: Verify OpenSSL version
-        run: |
-          export LD_LIBRARY_PATH=/opt/openssl-3.6/lib64:/opt/openssl-3.6/lib:$LD_LIBRARY_PATH
-          /opt/openssl-3.6/bin/openssl version
+        run: /opt/openssl-3.6/bin/openssl version
 
       - name: CMake configure
         run: |
@@ -55,13 +56,14 @@ jobs:
         run: cmake --build build -j$(nproc)
 
       - name: Test
-        run: |
-          export LD_LIBRARY_PATH=/opt/openssl-3.6/lib64:/opt/openssl-3.6/lib:$LD_LIBRARY_PATH
-          cd build && ctest --output-on-failure
+        run: cd build && ctest --output-on-failure
 
   coverage:
     name: Coverage (Ubuntu 24.04 / OpenSSL 3.3)
     runs-on: ubuntu-24.04
+    env:
+      PKG_CONFIG_PATH: /opt/openssl-3.6/lib64/pkgconfig:/opt/openssl-3.6/lib/pkgconfig
+      LD_LIBRARY_PATH: /opt/openssl-3.6/lib64:/opt/openssl-3.6/lib
     steps:
       - uses: actions/checkout@v4
 
@@ -105,9 +107,7 @@ jobs:
         run: cmake --build build-cov -j$(nproc)
 
       - name: Test
-        run: |
-          export LD_LIBRARY_PATH=/opt/openssl-3.6/lib64:/opt/openssl-3.6/lib:$LD_LIBRARY_PATH
-          cd build-cov && ctest --output-on-failure
+        run: cd build-cov && ctest --output-on-failure
 
       - name: Capture coverage
         run: |
