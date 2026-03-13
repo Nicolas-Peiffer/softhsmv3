@@ -1,6 +1,5 @@
 use wasm_bindgen::prelude::*;
 
-
 // ── PKCS#11 Return Values ────────────────────────────────────────────────────
 
 pub const CKR_OK: u32 = 0x0000_0000;
@@ -29,41 +28,41 @@ pub const CKA_PARAMETER_SET: u32 = 0x0000_061d;
 
 // ── PKCS#11 Object Classes ────────────────────────────────────────────────────
 
-pub const CKO_PUBLIC_KEY: u32  = 0x0000_0002;
+pub const CKO_PUBLIC_KEY: u32 = 0x0000_0002;
 pub const CKO_PRIVATE_KEY: u32 = 0x0000_0003;
-pub const CKO_SECRET_KEY: u32  = 0x0000_0004;
+pub const CKO_SECRET_KEY: u32 = 0x0000_0004;
 
 // ── PKCS#11 Key Types (CKK_*) ────────────────────────────────────────────────
 
-pub const CKK_RSA: u32            = 0x0000_0000;
-pub const CKK_EC: u32             = 0x0000_0003; // ECDSA (P-256, P-384)
+pub const CKK_RSA: u32 = 0x0000_0000;
+pub const CKK_EC: u32 = 0x0000_0003; // ECDSA (P-256, P-384)
 pub const CKK_GENERIC_SECRET: u32 = 0x0000_0010;
-pub const CKK_AES: u32            = 0x0000_001f;
-pub const CKK_EC_EDWARDS: u32     = 0x0000_0040; // EdDSA (Ed25519)
-pub const CKK_ML_KEM: u32         = 0x0000_0049;
-pub const CKK_ML_DSA: u32         = 0x0000_004a;
-pub const CKK_SLH_DSA: u32        = 0x0000_004b;
+pub const CKK_AES: u32 = 0x0000_001f;
+pub const CKK_EC_EDWARDS: u32 = 0x0000_0040; // EdDSA (Ed25519)
+pub const CKK_ML_KEM: u32 = 0x0000_0049;
+pub const CKK_ML_DSA: u32 = 0x0000_004a;
+pub const CKK_SLH_DSA: u32 = 0x0000_004b;
 
 // ── PKCS#11 Semantic Attribute Types ─────────────────────────────────────────
 
-pub const CKA_CLASS: u32       = 0x0000_0000;
-pub const CKA_TOKEN: u32       = 0x0000_0001;
-pub const CKA_PRIVATE: u32     = 0x0000_0002;
-pub const CKA_SENSITIVE: u32   = 0x0000_0103;
-pub const CKA_ENCRYPT: u32     = 0x0000_0104;
-pub const CKA_DECRYPT: u32     = 0x0000_0105;
-pub const CKA_WRAP: u32        = 0x0000_0106;
-pub const CKA_UNWRAP: u32      = 0x0000_0107;
-pub const CKA_SIGN: u32        = 0x0000_0108;
-pub const CKA_VERIFY: u32      = 0x0000_010a;
-pub const CKA_DERIVE: u32      = 0x0000_010c;
-pub const CKA_EXTRACTABLE: u32        = 0x0000_0162;
-pub const CKA_LOCAL: u32              = 0x0000_0163;
-pub const CKA_NEVER_EXTRACTABLE: u32  = 0x0000_0164;
-pub const CKA_ALWAYS_SENSITIVE: u32   = 0x0000_0165;
-pub const CKA_KEY_GEN_MECHANISM: u32  = 0x0000_0166;
-pub const CKA_ENCAPSULATE: u32        = 0x0000_0633;
-pub const CKA_DECAPSULATE: u32        = 0x0000_0634;
+pub const CKA_CLASS: u32 = 0x0000_0000;
+pub const CKA_TOKEN: u32 = 0x0000_0001;
+pub const CKA_PRIVATE: u32 = 0x0000_0002;
+pub const CKA_SENSITIVE: u32 = 0x0000_0103;
+pub const CKA_ENCRYPT: u32 = 0x0000_0104;
+pub const CKA_DECRYPT: u32 = 0x0000_0105;
+pub const CKA_WRAP: u32 = 0x0000_0106;
+pub const CKA_UNWRAP: u32 = 0x0000_0107;
+pub const CKA_SIGN: u32 = 0x0000_0108;
+pub const CKA_VERIFY: u32 = 0x0000_010a;
+pub const CKA_DERIVE: u32 = 0x0000_010c;
+pub const CKA_EXTRACTABLE: u32 = 0x0000_0162;
+pub const CKA_LOCAL: u32 = 0x0000_0163;
+pub const CKA_NEVER_EXTRACTABLE: u32 = 0x0000_0164;
+pub const CKA_ALWAYS_SENSITIVE: u32 = 0x0000_0165;
+pub const CKA_KEY_GEN_MECHANISM: u32 = 0x0000_0166;
+pub const CKA_ENCAPSULATE: u32 = 0x0000_0633;
+pub const CKA_DECAPSULATE: u32 = 0x0000_0634;
 
 // Private attribute: stores the parameter set on generated keys
 pub const CKA_PRIV_PARAM_SET: u32 = 0xFFFF_0001;
@@ -116,10 +115,10 @@ pub const CKM_SP800_108_FEEDBACK_KDF: u32 = 0x0000_03ad;
 pub const CKM_HKDF_DERIVE: u32 = 0x0000_402a;
 
 // ML-DSA pre-hash mechanisms (PKCS#11 v3.2, pkcs11t.h §1221-1231)
-pub const CKM_HASH_ML_DSA_SHA224:   u32 = 0x0000_0023;
-pub const CKM_HASH_ML_DSA_SHA256:   u32 = 0x0000_0024;
-pub const CKM_HASH_ML_DSA_SHA384:   u32 = 0x0000_0025;
-pub const CKM_HASH_ML_DSA_SHA512:   u32 = 0x0000_0026;
+pub const CKM_HASH_ML_DSA_SHA224: u32 = 0x0000_0023;
+pub const CKM_HASH_ML_DSA_SHA256: u32 = 0x0000_0024;
+pub const CKM_HASH_ML_DSA_SHA384: u32 = 0x0000_0025;
+pub const CKM_HASH_ML_DSA_SHA512: u32 = 0x0000_0026;
 pub const CKM_HASH_ML_DSA_SHA3_224: u32 = 0x0000_0027;
 pub const CKM_HASH_ML_DSA_SHA3_256: u32 = 0x0000_0028;
 pub const CKM_HASH_ML_DSA_SHA3_384: u32 = 0x0000_0029;
@@ -128,10 +127,10 @@ pub const CKM_HASH_ML_DSA_SHAKE128: u32 = 0x0000_002b;
 pub const CKM_HASH_ML_DSA_SHAKE256: u32 = 0x0000_002c;
 
 // SLH-DSA pre-hash mechanisms (PKCS#11 v3.2, pkcs11t.h §1235-1245)
-pub const CKM_HASH_SLH_DSA_SHA224:   u32 = 0x0000_0036;
-pub const CKM_HASH_SLH_DSA_SHA256:   u32 = 0x0000_0037;
-pub const CKM_HASH_SLH_DSA_SHA384:   u32 = 0x0000_0038;
-pub const CKM_HASH_SLH_DSA_SHA512:   u32 = 0x0000_0039;
+pub const CKM_HASH_SLH_DSA_SHA224: u32 = 0x0000_0036;
+pub const CKM_HASH_SLH_DSA_SHA256: u32 = 0x0000_0037;
+pub const CKM_HASH_SLH_DSA_SHA384: u32 = 0x0000_0038;
+pub const CKM_HASH_SLH_DSA_SHA512: u32 = 0x0000_0039;
 pub const CKM_HASH_SLH_DSA_SHA3_224: u32 = 0x0000_003a;
 pub const CKM_HASH_SLH_DSA_SHA3_256: u32 = 0x0000_003b;
 pub const CKM_HASH_SLH_DSA_SHA3_384: u32 = 0x0000_003c;

@@ -6,7 +6,6 @@ use wasm_bindgen::prelude::*;
 use crate::constants::*;
 use crate::state::*;
 
-
 /// Monotonically increasing session handle counter (PKCS#11 requires unique handles).
 pub static NEXT_SESSION_HANDLE: AtomicU32 = AtomicU32::new(1);
 
@@ -182,8 +181,7 @@ pub fn build_ec_spki_p256(pt: &[u8]) -> Vec<u8> {
     // AlgId for P-256: 30 13 06 07 2a8648ce3d0201 06 08 2a8648ce3d030107
     // BIT STRING header: 03 <len+1> 00
     let alg_id: &[u8] = &[
-        0x30, 0x13,
-        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
+        0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
         0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // secp256r1 OID
     ];
     build_spki_from_parts(alg_id, pt)
@@ -193,9 +191,8 @@ pub fn build_ec_spki_p256(pt: &[u8]) -> Vec<u8> {
 pub fn build_ec_spki_p384(pt: &[u8]) -> Vec<u8> {
     // AlgId for P-384: 30 10 06 07 2a8648ce3d0201 06 05 2b8104 0022
     let alg_id: &[u8] = &[
-        0x30, 0x10,
-        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
-        0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22,               // secp384r1 OID
+        0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
+        0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, // secp384r1 OID
     ];
     build_spki_from_parts(alg_id, pt)
 }
@@ -719,7 +716,8 @@ pub fn verify_ecdsa(
                 CKM_ECDSA_SHA3_224 => sha3::Sha3_224::digest(msg).to_vec(),
                 _ => sha3::Sha3_256::digest(msg).to_vec(),
             };
-            vk.verify_prehash(&hash, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+            vk.verify_prehash(&hash, &sig)
+                .map_err(|_| CKR_SIGNATURE_INVALID)
         }
         // SHA-3 prehash variants on P-384 — manually hash then verify prehash bytes
         (CKM_ECDSA_SHA3_384, CURVE_P384) | (CKM_ECDSA_SHA3_512, CURVE_P384) => {
@@ -733,7 +731,8 @@ pub fn verify_ecdsa(
                 CKM_ECDSA_SHA3_512 => sha3::Sha3_512::digest(msg).to_vec(),
                 _ => sha3::Sha3_384::digest(msg).to_vec(),
             };
-            vk.verify_prehash(&hash, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+            vk.verify_prehash(&hash, &sig)
+                .map_err(|_| CKR_SIGNATURE_INVALID)
         }
         _ => Err(CKR_MECHANISM_INVALID),
     }

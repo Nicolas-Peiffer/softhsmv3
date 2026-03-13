@@ -79,10 +79,11 @@ OSSLCryptoFactory::~OSSLCryptoFactory()
 // Return the one-and-only instance
 OSSLCryptoFactory* OSSLCryptoFactory::i()
 {
-	static std::once_flag s_initFlag;
-	std::call_once(s_initFlag, []() {
+	static std::mutex s_initMutex;
+	std::lock_guard<std::mutex> lock(s_initMutex);
+	if (!instance) {
 		instance.reset(new OSSLCryptoFactory());
-	});
+	}
 	return instance.get();
 }
 

@@ -5,8 +5,8 @@
 #![allow(clippy::too_many_arguments)]
 
 pub mod constants;
-pub mod state;
 pub mod crypto;
 pub mod ffi;
+pub mod state;
 
 pub use ffi::*;

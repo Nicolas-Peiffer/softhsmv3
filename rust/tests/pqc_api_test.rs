@@ -1,5 +1,5 @@
+use ml_kem::kem::{Decapsulate, Encapsulate};
 use ml_kem::KemCore;
-use ml_kem::kem::{Encapsulate, Decapsulate};
 use rand::rngs::OsRng;
 
 #[test]

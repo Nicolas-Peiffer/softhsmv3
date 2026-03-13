@@ -8,10 +8,9 @@ use wasm_bindgen::prelude::*;
 use zeroize::Zeroize;
 
 use crate::constants::*;
-use crate::state::*;
 use crate::crypto::*;
 use crate::slh_dsa_keygen;
-
+use crate::state::*;
 
 // ── Session Management ───────────────────────────────────────────────────────
 
@@ -163,7 +162,9 @@ pub fn C_GetMechanismInfo(_slot_id: u32, mech_type: u32, p_info: *mut u8) -> u32
         CKM_EDDSA => (255, 255, 0x00000800 | 0x00002000),
         CKM_AES_KEY_GEN => (16, 32, 0x00008000),
         CKM_AES_GCM | CKM_AES_CBC_PAD => (16, 32, 0x00000100 | 0x00000200),
-        CKM_AES_KEY_WRAP | CKM_AES_KEY_WRAP_KWP | CKM_AES_KEY_WRAP_PAD_LEGACY => (16, 32, 0x00040000 | 0x00020000),
+        CKM_AES_KEY_WRAP | CKM_AES_KEY_WRAP_KWP | CKM_AES_KEY_WRAP_PAD_LEGACY => {
+            (16, 32, 0x00040000 | 0x00020000)
+        }
         _ => return CKR_MECHANISM_INVALID,
     };
     unsafe {
@@ -211,7 +212,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut pub_attrs, CKA_CLASS, CKO_PUBLIC_KEY);
                 store_ulong(&mut pub_attrs, CKA_KEY_TYPE, CKK_ML_KEM);
                 store_ulong(&mut pub_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_KEM_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut pub_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_ML_KEM_KEY_PAIR_GEN,
+                );
                 store_bool(&mut pub_attrs, CKA_TOKEN, false);
                 store_bool(&mut pub_attrs, CKA_PRIVATE, false);
                 store_bool(&mut pub_attrs, CKA_ENCRYPT, false);
@@ -224,7 +229,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
                 store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_ML_KEM);
                 store_ulong(&mut prv_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_KEM_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut prv_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_ML_KEM_KEY_PAIR_GEN,
+                );
                 store_bool(&mut prv_attrs, CKA_TOKEN, false);
                 store_bool(&mut prv_attrs, CKA_PRIVATE, true);
                 store_bool(&mut prv_attrs, CKA_SENSITIVE, true);
@@ -255,8 +264,16 @@ pub fn C_GenerateKeyPair(
                     }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -286,7 +303,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut pub_attrs, CKA_CLASS, CKO_PUBLIC_KEY);
                 store_ulong(&mut pub_attrs, CKA_KEY_TYPE, CKK_ML_DSA);
                 store_ulong(&mut pub_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_DSA_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut pub_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_ML_DSA_KEY_PAIR_GEN,
+                );
                 store_bool(&mut pub_attrs, CKA_TOKEN, false);
                 store_bool(&mut pub_attrs, CKA_PRIVATE, false);
                 store_bool(&mut pub_attrs, CKA_ENCRYPT, false);
@@ -299,7 +320,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
                 store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_ML_DSA);
                 store_ulong(&mut prv_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_DSA_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut prv_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_ML_DSA_KEY_PAIR_GEN,
+                );
                 store_bool(&mut prv_attrs, CKA_TOKEN, false);
                 store_bool(&mut prv_attrs, CKA_PRIVATE, true);
                 store_bool(&mut prv_attrs, CKA_SENSITIVE, true);
@@ -335,8 +360,16 @@ pub fn C_GenerateKeyPair(
                     }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -360,7 +393,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut pub_attrs, CKA_CLASS, CKO_PUBLIC_KEY);
                 store_ulong(&mut pub_attrs, CKA_KEY_TYPE, CKK_SLH_DSA);
                 store_ulong(&mut pub_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_SLH_DSA_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut pub_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_SLH_DSA_KEY_PAIR_GEN,
+                );
                 store_bool(&mut pub_attrs, CKA_TOKEN, false);
                 store_bool(&mut pub_attrs, CKA_PRIVATE, false);
                 store_bool(&mut pub_attrs, CKA_ENCRYPT, false);
@@ -373,7 +410,11 @@ pub fn C_GenerateKeyPair(
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
                 store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_SLH_DSA);
                 store_ulong(&mut prv_attrs, CKA_PARAMETER_SET, ps);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_SLH_DSA_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut prv_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_SLH_DSA_KEY_PAIR_GEN,
+                );
                 store_bool(&mut prv_attrs, CKA_TOKEN, false);
                 store_bool(&mut prv_attrs, CKA_PRIVATE, true);
                 store_bool(&mut prv_attrs, CKA_SENSITIVE, true);
@@ -424,8 +465,16 @@ pub fn C_GenerateKeyPair(
                     }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -478,7 +527,11 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut pub_attrs, CKA_WRAP, true);
                 store_bool(&mut pub_attrs, CKA_DERIVE, false);
                 store_bool(&mut pub_attrs, CKA_LOCAL, true);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_RSA_PKCS_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut pub_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_RSA_PKCS_KEY_PAIR_GEN,
+                );
                 // PKCS#11 v3.2 defaults — RSA private key
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
                 store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_RSA);
@@ -491,7 +544,11 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut prv_attrs, CKA_UNWRAP, true);
                 store_bool(&mut prv_attrs, CKA_DERIVE, false);
                 store_bool(&mut prv_attrs, CKA_LOCAL, true);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_RSA_PKCS_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut prv_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_RSA_PKCS_KEY_PAIR_GEN,
+                );
                 // SubjectPublicKeyInfo DER (CKA_PUBLIC_KEY_INFO)
                 {
                     use rsa::pkcs8::EncodePublicKey;
@@ -501,8 +558,16 @@ pub fn C_GenerateKeyPair(
                 }
                 pub_attrs.insert(CKA_VALUE, pk_bytes);
                 prv_attrs.insert(CKA_VALUE, sk_der.as_bytes().to_vec());
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -576,8 +641,16 @@ pub fn C_GenerateKeyPair(
                     let spki = build_ec_spki_p256(&vk_bytes);
                     pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
                 }
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -603,7 +676,11 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut pub_attrs, CKA_WRAP, false);
                 store_bool(&mut pub_attrs, CKA_DERIVE, false);
                 store_bool(&mut pub_attrs, CKA_LOCAL, true);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_EC_EDWARDS_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut pub_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_EC_EDWARDS_KEY_PAIR_GEN,
+                );
                 // PKCS#11 v3.2 defaults — EdDSA private key
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
                 store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_EC_EDWARDS);
@@ -616,7 +693,11 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut prv_attrs, CKA_UNWRAP, false);
                 store_bool(&mut prv_attrs, CKA_DERIVE, false);
                 store_bool(&mut prv_attrs, CKA_LOCAL, true);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_EC_EDWARDS_KEY_PAIR_GEN);
+                store_ulong(
+                    &mut prv_attrs,
+                    CKA_KEY_GEN_MECHANISM,
+                    CKM_EC_EDWARDS_KEY_PAIR_GEN,
+                );
                 let vk_bytes = vk.to_bytes().to_vec();
                 prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
                 pub_attrs.insert(CKA_VALUE, vk_bytes.clone());
@@ -624,8 +705,16 @@ pub fn C_GenerateKeyPair(
                 // 30 2a 30 05 06 03 2b6570 03 22 00 <32 bytes>
                 let spki = build_ed25519_spki(&vk_bytes);
                 pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
-                absorb_template_attrs(&mut pub_attrs, p_public_key_template, ul_public_key_attribute_count);
-                absorb_template_attrs(&mut prv_attrs, p_private_key_template, ul_private_key_attribute_count);
+                absorb_template_attrs(
+                    &mut pub_attrs,
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                );
+                absorb_template_attrs(
+                    &mut prv_attrs,
+                    p_private_key_template,
+                    ul_private_key_attribute_count,
+                );
                 finalize_private_key_attrs(&mut prv_attrs);
                 *ph_public_key = allocate_handle(pub_attrs);
                 *ph_private_key = allocate_handle(prv_attrs);
@@ -1059,12 +1148,10 @@ pub fn C_Sign(
             | CKM_SHA3_512_HMAC => sign_hmac(eff_mech, &sk_bytes, eff_msg),
             CKM_KMAC_128 | CKM_KMAC_256 => sign_kmac(eff_mech, &sk_bytes, eff_msg),
             CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => sign_rsa(eff_mech, &sk_bytes, eff_msg),
-            CKM_ECDSA_SHA256
-            | CKM_ECDSA_SHA384
-            | CKM_ECDSA_SHA3_224
-            | CKM_ECDSA_SHA3_256
-            | CKM_ECDSA_SHA3_384
-            | CKM_ECDSA_SHA3_512 => sign_ecdsa(eff_mech, ps, &sk_bytes, eff_msg),
+            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256
+            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
+                sign_ecdsa(eff_mech, ps, &sk_bytes, eff_msg)
+            }
             CKM_EDDSA => sign_eddsa(&sk_bytes, eff_msg),
             CKM_EDDSA_PH => sign_eddsa_ph(&sk_bytes, eff_msg),
             _ => Err(CKR_MECHANISM_INVALID),
@@ -1176,27 +1263,21 @@ pub fn C_Verify(
             CKM_SLH_DSA => verify_slh_dsa(ps, &pk_bytes, eff_msg, sig_bytes),
             CKM_SHA256_HMAC | CKM_SHA384_HMAC | CKM_SHA512_HMAC | CKM_SHA3_256_HMAC
             | CKM_SHA3_512_HMAC => verify_hmac(eff_mech, &pk_bytes, eff_msg, sig_bytes),
-            CKM_KMAC_128 | CKM_KMAC_256 => {
-                match sign_kmac(eff_mech, &pk_bytes, eff_msg) {
-                    Ok(sig) => {
-                        if sig == sig_bytes {
-                            Ok(())
-                        } else {
-                            Err(CKR_SIGNATURE_INVALID)
-                        }
+            CKM_KMAC_128 | CKM_KMAC_256 => match sign_kmac(eff_mech, &pk_bytes, eff_msg) {
+                Ok(sig) => {
+                    if sig == sig_bytes {
+                        Ok(())
+                    } else {
+                        Err(CKR_SIGNATURE_INVALID)
                     }
-                    Err(e) => Err(e),
                 }
-            }
+                Err(e) => Err(e),
+            },
             CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => {
                 verify_rsa(eff_mech, &pk_bytes, eff_msg, sig_bytes)
             }
-            CKM_ECDSA_SHA256
-            | CKM_ECDSA_SHA384
-            | CKM_ECDSA_SHA3_224
-            | CKM_ECDSA_SHA3_256
-            | CKM_ECDSA_SHA3_384
-            | CKM_ECDSA_SHA3_512 => {
+            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256
+            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
                 verify_ecdsa(eff_mech, ps, &pk_bytes, eff_msg, sig_bytes)
             }
             CKM_EDDSA => verify_eddsa(&pk_bytes, eff_msg, sig_bytes),
@@ -1510,7 +1591,13 @@ pub fn C_Encrypt(
             ENCRYPT_STATE.with(|s| {
                 s.borrow_mut().insert(
                     h_session,
-                    EncryptCtx { mech_type, key_handle, iv, aad: Vec::new(), tag_bits },
+                    EncryptCtx {
+                        mech_type,
+                        key_handle,
+                        iv,
+                        aad: Vec::new(),
+                        tag_bits,
+                    },
                 );
             });
             return CKR_OK;
@@ -1722,7 +1809,13 @@ pub fn C_Decrypt(
             DECRYPT_STATE.with(|s| {
                 s.borrow_mut().insert(
                     h_session,
-                    EncryptCtx { mech_type, key_handle, iv, aad: Vec::new(), tag_bits },
+                    EncryptCtx {
+                        mech_type,
+                        key_handle,
+                        iv,
+                        aad: Vec::new(),
+                        tag_bits,
+                    },
                 );
             });
             return CKR_OK;
@@ -1981,7 +2074,8 @@ pub fn C_DeriveKey(
             return CKR_ARGUMENTS_BAD;
         }
         let mech_type = *(p_mechanism as *const u32);
-        let key_len = get_attr_ulong(p_template, ul_attribute_count, CKA_VALUE_LEN).unwrap_or(32) as usize;
+        let key_len =
+            get_attr_ulong(p_template, ul_attribute_count, CKA_VALUE_LEN).unwrap_or(32) as usize;
 
         // PKCS#11 v3.2 §5.18: for key-based derivation, verify CKA_DERIVE on the base key.
         // PBKDF2 uses h_base_key=0 (password in params), so skip the check for that case.
@@ -2040,7 +2134,8 @@ pub fn C_DeriveKey(
                         let sk = x25519_dalek::StaticSecret::from(sk_arr);
                         let mut pk_arr = [0u8; 32];
                         pk_arr.copy_from_slice(peer_pk_bytes);
-                        let result = sk.diffie_hellman(&x25519_dalek::PublicKey::from(pk_arr))
+                        let result = sk
+                            .diffie_hellman(&x25519_dalek::PublicKey::from(pk_arr))
                             .as_bytes()
                             .to_vec();
                         pk_arr.zeroize();
@@ -2100,9 +2195,15 @@ pub fn C_DeriveKey(
                 };
                 let mut out = vec![0u8; key_len];
                 match prf {
-                    CKP_PBKDF2_HMAC_SHA256 => pbkdf2::pbkdf2_hmac::<sha2::Sha256>(pass, salt, iterations, &mut out),
-                    CKP_PBKDF2_HMAC_SHA384 => pbkdf2::pbkdf2_hmac::<sha2::Sha384>(pass, salt, iterations, &mut out),
-                    CKP_PBKDF2_HMAC_SHA512 => pbkdf2::pbkdf2_hmac::<sha2::Sha512>(pass, salt, iterations, &mut out),
+                    CKP_PBKDF2_HMAC_SHA256 => {
+                        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(pass, salt, iterations, &mut out)
+                    }
+                    CKP_PBKDF2_HMAC_SHA384 => {
+                        pbkdf2::pbkdf2_hmac::<sha2::Sha384>(pass, salt, iterations, &mut out)
+                    }
+                    CKP_PBKDF2_HMAC_SHA512 => {
+                        pbkdf2::pbkdf2_hmac::<sha2::Sha512>(pass, salt, iterations, &mut out)
+                    }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
                 out
@@ -2128,11 +2229,12 @@ pub fn C_DeriveKey(
                 let salt_len = *p_param.add(4) as usize;
                 let info_ptr = *p_param.add(6) as usize as *const u8;
                 let info_len = *p_param.add(7) as usize;
-                let salt_opt = if salt_type == CKF_HKDF_SALT_DATA && !salt_ptr.is_null() && salt_len > 0 {
-                    Some(std::slice::from_raw_parts(salt_ptr, salt_len))
-                } else {
-                    None
-                };
+                let salt_opt =
+                    if salt_type == CKF_HKDF_SALT_DATA && !salt_ptr.is_null() && salt_len > 0 {
+                        Some(std::slice::from_raw_parts(salt_ptr, salt_len))
+                    } else {
+                        None
+                    };
                 let info = if !info_ptr.is_null() && info_len > 0 {
                     std::slice::from_raw_parts(info_ptr, info_len)
                 } else {
@@ -2143,23 +2245,34 @@ pub fn C_DeriveKey(
                     match prf {
                         CKM_SHA384 => {
                             let hk = hkdf::Hkdf::<sha2::Sha384>::new(salt_opt, &ikm);
-                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                            if hk.expand(info, &mut out).is_err() {
+                                return CKR_FUNCTION_FAILED;
+                            }
                         }
                         CKM_SHA512 => {
                             let hk = hkdf::Hkdf::<sha2::Sha512>::new(salt_opt, &ikm);
-                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                            if hk.expand(info, &mut out).is_err() {
+                                return CKR_FUNCTION_FAILED;
+                            }
                         }
                         CKM_SHA3_256 => {
                             let hk = hkdf::Hkdf::<sha3::Sha3_256>::new(salt_opt, &ikm);
-                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                            if hk.expand(info, &mut out).is_err() {
+                                return CKR_FUNCTION_FAILED;
+                            }
                         }
                         CKM_SHA3_512 => {
                             let hk = hkdf::Hkdf::<sha3::Sha3_512>::new(salt_opt, &ikm);
-                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                            if hk.expand(info, &mut out).is_err() {
+                                return CKR_FUNCTION_FAILED;
+                            }
                         }
-                        _ => { // CKM_SHA256 default
+                        _ => {
+                            // CKM_SHA256 default
                             let hk = hkdf::Hkdf::<sha2::Sha256>::new(salt_opt, &ikm);
-                            if hk.expand(info, &mut out).is_err() { return CKR_FUNCTION_FAILED; }
+                            if hk.expand(info, &mut out).is_err() {
+                                return CKR_FUNCTION_FAILED;
+                            }
                         }
                     }
                 } else {
@@ -2172,11 +2285,11 @@ pub fn C_DeriveKey(
                         }};
                     }
                     match prf {
-                        CKM_SHA384    => hkdf_extract!(sha2::Sha384),
-                        CKM_SHA512    => hkdf_extract!(sha2::Sha512),
-                        CKM_SHA3_256  => hkdf_extract!(sha3::Sha3_256),
-                        CKM_SHA3_512  => hkdf_extract!(sha3::Sha3_512),
-                        _             => hkdf_extract!(sha2::Sha256), // CKM_SHA256 default
+                        CKM_SHA384 => hkdf_extract!(sha2::Sha384),
+                        CKM_SHA512 => hkdf_extract!(sha2::Sha512),
+                        CKM_SHA3_256 => hkdf_extract!(sha3::Sha3_256),
+                        CKM_SHA3_512 => hkdf_extract!(sha3::Sha3_512),
+                        _ => hkdf_extract!(sha2::Sha256), // CKM_SHA256 default
                     }
                 }
                 out
@@ -2205,7 +2318,9 @@ pub fn C_DeriveKey(
                             let val_ptr = *p_segs.add(i * 3 + 1) as usize as *const u8;
                             let val_len = *p_segs.add(i * 3 + 2) as usize;
                             if !val_ptr.is_null() && val_len > 0 {
-                                fixed.extend_from_slice(std::slice::from_raw_parts(val_ptr, val_len));
+                                fixed.extend_from_slice(std::slice::from_raw_parts(
+                                    val_ptr, val_len,
+                                ));
                             }
                         }
                     }
@@ -2267,7 +2382,9 @@ pub fn C_DeriveKey(
                             let val_ptr = *p_segs.add(i * 3 + 1) as usize as *const u8;
                             let val_len = *p_segs.add(i * 3 + 2) as usize;
                             if !val_ptr.is_null() && val_len > 0 {
-                                fixed.extend_from_slice(std::slice::from_raw_parts(val_ptr, val_len));
+                                fixed.extend_from_slice(std::slice::from_raw_parts(
+                                    val_ptr, val_len,
+                                ));
                             }
                         }
                     }
@@ -2333,8 +2450,7 @@ pub fn C_WrapKey(
             return CKR_ARGUMENTS_BAD;
         }
         let mech_type = *(p_mechanism as *const u32);
-        let is_kwp = mech_type == CKM_AES_KEY_WRAP_KWP
-            || mech_type == CKM_AES_KEY_WRAP_PAD_LEGACY;
+        let is_kwp = mech_type == CKM_AES_KEY_WRAP_KWP || mech_type == CKM_AES_KEY_WRAP_PAD_LEGACY;
         let is_aes_wrap = mech_type == CKM_AES_KEY_WRAP || is_kwp;
         let is_rsa_oaep = mech_type == CKM_RSA_PKCS_OAEP;
         if !is_aes_wrap && !is_rsa_oaep {
@@ -2384,9 +2500,12 @@ pub fn C_WrapKey(
             if wrapping_key.len() < 8 {
                 return CKR_KEY_TYPE_INCONSISTENT;
             }
-            let n_len =
-                u32::from_le_bytes([wrapping_key[0], wrapping_key[1], wrapping_key[2], wrapping_key[3]])
-                    as usize;
+            let n_len = u32::from_le_bytes([
+                wrapping_key[0],
+                wrapping_key[1],
+                wrapping_key[2],
+                wrapping_key[3],
+            ]) as usize;
             if wrapping_key.len() < 4 + n_len + 1 {
                 return CKR_KEY_TYPE_INCONSISTENT;
             }
@@ -2480,8 +2599,7 @@ pub fn C_UnwrapKey(
             return CKR_ARGUMENTS_BAD;
         }
         let mech_type = *(p_mechanism as *const u32);
-        let is_kwp = mech_type == CKM_AES_KEY_WRAP_KWP
-            || mech_type == CKM_AES_KEY_WRAP_PAD_LEGACY;
+        let is_kwp = mech_type == CKM_AES_KEY_WRAP_KWP || mech_type == CKM_AES_KEY_WRAP_PAD_LEGACY;
         let is_aes_wrap = mech_type == CKM_AES_KEY_WRAP || is_kwp;
         let is_rsa_oaep = mech_type == CKM_RSA_PKCS_OAEP;
         if !is_aes_wrap && !is_rsa_oaep {
@@ -2582,7 +2700,9 @@ pub fn C_UnwrapKey(
                 let val_ptr = *tmpl_ptr.add((i * 3 + 1) as usize) as usize as *const u8;
                 let val_len = *tmpl_ptr.add((i * 3 + 2) as usize);
                 // Skip CKA_VALUE — it comes from the unwrap operation
-                if attr_type == CKA_VALUE { continue; }
+                if attr_type == CKA_VALUE {
+                    continue;
+                }
                 if !val_ptr.is_null() && val_len > 0 {
                     let mut v = vec![0u8; val_len as usize];
                     std::ptr::copy_nonoverlapping(val_ptr, v.as_mut_ptr(), val_len as usize);
@@ -2818,7 +2938,9 @@ pub fn C_UnwrapKeyAuthenticated(
                 let attr_type = *tmpl_ptr.add((i * 3) as usize);
                 let val_ptr = *tmpl_ptr.add((i * 3 + 1) as usize) as usize as *const u8;
                 let val_len = *tmpl_ptr.add((i * 3 + 2) as usize);
-                if attr_type == CKA_VALUE { continue; }
+                if attr_type == CKA_VALUE {
+                    continue;
+                }
                 if !val_ptr.is_null() && val_len > 0 {
                     let mut v = vec![0u8; val_len as usize];
                     std::ptr::copy_nonoverlapping(val_ptr, v.as_mut_ptr(), val_len as usize);
@@ -2914,11 +3036,7 @@ pub fn C_DecryptUpdate(
 }
 
 #[wasm_bindgen(js_name = _C_DecryptFinal)]
-pub fn C_DecryptFinal(
-    _h_session: u32,
-    _p_last_part: *mut u8,
-    _pul_last_part_len: *mut u32,
-) -> u32 {
+pub fn C_DecryptFinal(_h_session: u32, _p_last_part: *mut u8, _pul_last_part_len: *mut u32) -> u32 {
     CKR_FUNCTION_NOT_SUPPORTED
 }
 
@@ -2964,7 +3082,7 @@ pub fn C_GetSlotInfo(_slot_id: u32, p_info: *mut u8) -> u32 {
     unsafe {
         let info = std::slice::from_raw_parts_mut(p_info, 104);
         info.fill(b' '); // PKCS#11 padding is spaces for char arrays
-        // slotDescription[64] at offset 0
+                         // slotDescription[64] at offset 0
         let desc = b"SoftHSMv3 Rust WASM Virtual Slot                                ";
         info[0..64].copy_from_slice(&desc[..64]);
         // manufacturerID[32] at offset 64
@@ -2987,15 +3105,25 @@ pub fn C_GetSlotInfo(_slot_id: u32, p_info: *mut u8) -> u32 {
 
 #[wasm_bindgen(js_name = _C_SetPIN)]
 pub fn C_SetPIN(
-    _h_session: u32, _p_old_pin: *mut u8, _ul_old_len: u32,
-    _p_new_pin: *mut u8, _ul_new_len: u32,
-) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+    _h_session: u32,
+    _p_old_pin: *mut u8,
+    _ul_old_len: u32,
+    _p_new_pin: *mut u8,
+    _ul_new_len: u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_CopyObject)]
 pub fn C_CopyObject(
-    _h_session: u32, _h_object: u32,
-    _p_template: *mut u8, _ul_count: u32, _ph_new_object: *mut u32,
-) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+    _h_session: u32,
+    _h_object: u32,
+    _p_template: *mut u8,
+    _ul_count: u32,
+    _ph_new_object: *mut u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_GetObjectSize)]
 pub fn C_GetObjectSize(_h_session: u32, _h_object: u32, _pul_size: *mut u32) -> u32 {
@@ -3004,22 +3132,38 @@ pub fn C_GetObjectSize(_h_session: u32, _h_object: u32, _pul_size: *mut u32) -> 
 
 #[wasm_bindgen(js_name = _C_SetAttributeValue)]
 pub fn C_SetAttributeValue(
-    _h_session: u32, _h_object: u32, _p_template: *mut u8, _ul_count: u32,
-) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+    _h_session: u32,
+    _h_object: u32,
+    _p_template: *mut u8,
+    _ul_count: u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_DigestKey)]
-pub fn C_DigestKey(_h_session: u32, _h_key: u32) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+pub fn C_DigestKey(_h_session: u32, _h_key: u32) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_GetOperationState)]
 pub fn C_GetOperationState(
-    _h_session: u32, _p_operation_state: *mut u8, _pul_operation_state_len: *mut u32,
-) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+    _h_session: u32,
+    _p_operation_state: *mut u8,
+    _pul_operation_state_len: *mut u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_SetOperationState)]
 pub fn C_SetOperationState(
-    _h_session: u32, _p_operation_state: *mut u8, _ul_operation_state_len: u32,
-    _h_encryption_key: u32, _h_authentication_key: u32,
-) -> u32 { CKR_FUNCTION_NOT_SUPPORTED }
+    _h_session: u32,
+    _p_operation_state: *mut u8,
+    _ul_operation_state_len: u32,
+    _h_encryption_key: u32,
+    _h_authentication_key: u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
 
 #[wasm_bindgen(js_name = _C_SeedRandom)]
 pub fn C_SeedRandom(_h_session: u32, _p_seed: *mut u8, _ul_seed_len: u32) -> u32 {
@@ -3037,6 +3181,12 @@ pub struct CK_MECHANISM {
     pub ulParameterLen: u32,
 }
 
+impl Default for SoftHsmRust {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl SoftHsmRust {
     #[wasm_bindgen(constructor)]
@@ -3051,47 +3201,73 @@ impl SoftHsmRust {
         let mut p_pin = pin.as_bytes().to_vec();
         let mut p_label = label.as_bytes().to_vec();
         p_label.resize(32, b' ');
-        
+
         let result = C_InitToken(
             slot_id,
             p_pin.as_mut_ptr(),
             p_pin.len() as u32,
-            p_label.as_mut_ptr()
+            p_label.as_mut_ptr(),
         );
         result == CKR_OK
     }
 
     pub fn generate_aes_key(&self, key_size: u32) -> u32 {
         let mut h_session: u32 = 0;
-        C_OpenSession(0, 6, std::ptr::null_mut(), std::ptr::null_mut(), &mut h_session);
-        
+        C_OpenSession(
+            0,
+            6,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut h_session,
+        );
+
         // Mock template for AES key
         let mut h_key: u32 = 0;
-        let mut ck_true = 1u8;
-        let mut ck_false = 0u8;
-        let mut k_type = CKK_AES;
-        let mut class = CKO_SECRET_KEY;
-        let mut val_len = key_size;
-        
+        let ck_true = 1u8;
+        let k_type = CKK_AES;
+        let class = CKO_SECRET_KEY;
+        let val_len = key_size;
+
         let mut tmpl = vec![
-            CKA_CLASS, &class as *const _ as u32, 4,
-            CKA_KEY_TYPE, &k_type as *const _ as u32, 4,
-            CKA_VALUE_LEN, &val_len as *const _ as u32, 4,
-            CKA_ENCRYPT, &ck_true as *const _ as u32, 1,
-            CKA_DECRYPT, &ck_true as *const _ as u32, 1,
+            CKA_CLASS,
+            &class as *const _ as u32,
+            4,
+            CKA_KEY_TYPE,
+            &k_type as *const _ as u32,
+            4,
+            CKA_VALUE_LEN,
+            &val_len as *const _ as u32,
+            4,
+            CKA_ENCRYPT,
+            &ck_true as *const _ as u32,
+            1,
+            CKA_DECRYPT,
+            &ck_true as *const _ as u32,
+            1,
         ];
-        
+
         let mut mech = CK_MECHANISM {
             mechanism: CKM_AES_KEY_GEN,
             pParameter: std::ptr::null_mut(),
             ulParameterLen: 0,
         };
-        
-        C_GenerateKey(h_session, &mut mech as *mut _ as *mut u8, tmpl.as_mut_ptr() as *mut u8, 5, &mut h_key);
+
+        C_GenerateKey(
+            h_session,
+            &mut mech as *mut _ as *mut u8,
+            tmpl.as_mut_ptr() as *mut u8,
+            5,
+            &mut h_key,
+        );
         h_key
     }
 
-    pub fn aes_ctr_encrypt(&self, key_handle: u32, iv: &[u8], plaintext: &[u8]) -> js_sys::Uint8Array {
+    pub fn aes_ctr_encrypt(
+        &self,
+        key_handle: u32,
+        iv: &[u8],
+        plaintext: &[u8],
+    ) -> js_sys::Uint8Array {
         let mut param = vec![0u8; 20];
         param[0..4].copy_from_slice(&128u32.to_ne_bytes());
         param[4..20].copy_from_slice(iv);
@@ -3100,20 +3276,31 @@ impl SoftHsmRust {
             pParameter: param.as_mut_ptr(),
             ulParameterLen: 20,
         };
-        
+
         // Use a mock session 1 since it's just tests
         let h_session = 1;
         C_EncryptInit(h_session, &mut mech as *mut _ as *mut u8, key_handle);
-        
+
         let mut out_len = plaintext.len() as u32;
         let mut out = vec![0u8; plaintext.len()];
-        
-        C_Encrypt(h_session, plaintext.as_ptr() as *mut u8, plaintext.len() as u32, out.as_mut_ptr(), &mut out_len);
-        
+
+        C_Encrypt(
+            h_session,
+            plaintext.as_ptr() as *mut u8,
+            plaintext.len() as u32,
+            out.as_mut_ptr(),
+            &mut out_len,
+        );
+
         js_sys::Uint8Array::from(&out[..out_len as usize])
     }
 
-    pub fn aes_ctr_decrypt(&self, key_handle: u32, iv: &[u8], ciphertext: &[u8]) -> js_sys::Uint8Array {
+    pub fn aes_ctr_decrypt(
+        &self,
+        key_handle: u32,
+        iv: &[u8],
+        ciphertext: &[u8],
+    ) -> js_sys::Uint8Array {
         let mut param = vec![0u8; 20];
         param[0..4].copy_from_slice(&128u32.to_ne_bytes());
         param[4..20].copy_from_slice(iv);
@@ -3122,15 +3309,21 @@ impl SoftHsmRust {
             pParameter: param.as_mut_ptr(),
             ulParameterLen: 20,
         };
-        
+
         let h_session = 1;
         C_DecryptInit(h_session, &mut mech as *mut _ as *mut u8, key_handle);
-        
+
         let mut out_len = ciphertext.len() as u32;
         let mut out = vec![0u8; ciphertext.len()];
-        
-        C_Decrypt(h_session, ciphertext.as_ptr() as *mut u8, ciphertext.len() as u32, out.as_mut_ptr(), &mut out_len);
-        
+
+        C_Decrypt(
+            h_session,
+            ciphertext.as_ptr() as *mut u8,
+            ciphertext.len() as u32,
+            out.as_mut_ptr(),
+            &mut out_len,
+        );
+
         js_sys::Uint8Array::from(&out[..out_len as usize])
     }
 }
