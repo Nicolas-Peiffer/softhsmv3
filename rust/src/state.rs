@@ -14,6 +14,7 @@ thread_local! {
     pub static DECRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
     pub static DIGEST_STATE: RefCell<HashMap<u32, DigestCtx>> = RefCell::new(HashMap::new());
     pub static FIND_STATE: RefCell<HashMap<u32, FindCtx>> = RefCell::new(HashMap::new());
+    pub static ACVP_SEED: RefCell<Option<[u8; 32]>> = RefCell::new(None);
 }
 
 pub struct EncryptCtx {

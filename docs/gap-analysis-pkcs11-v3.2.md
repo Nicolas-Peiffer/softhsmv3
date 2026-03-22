@@ -388,12 +388,12 @@ are also resolved in the Rust engine and which remain Rust-only stubs.
 | SHA-256/384/512, SHA3-256/512 digest | ✅ | ✅ | |
 | HKDF (G-5G3) | ✅ | ✅ | `C_DeriveKey` |
 | PBKDF2 / CKM_PKCS5_PBKD2 (G-DA1) | ✅ | ✅ | `C_DeriveKey` |
-| ECDSA-SHA3 variants (G-DA2) | ✅ | ❌ Not implemented | No SHA-3 prehash in p256/p384 crates |
+| ECDSA-SHA3 variants (G-DA2) | ✅ | ✅ | Implemented via `hazmat::PrehashSigner` with manual digests |
 | CKA_PUBLIC_KEY_INFO (G-PUB1) | ✅ | ✅ | Via `spki` crate |
-| ECDH X9.63 KDF / CKD_SHA256_KDF (G-5G2) | ✅ | ❌ Not implemented | |
-| SP 800-108 Counter KDF (G-PK1) | ✅ | ❌ Not implemented | No standalone KBKDF crate |
-| SP 800-108 Feedback KDF (G-PK2) | ✅ | ❌ Not implemented | |
-| ECDH Cofactor Derive (G-PK4) | ✅ | ❌ Not implemented | |
+| ECDH X9.63 KDF / CKD_SHA256_KDF (G-5G2) | ✅ | ✅ | Manually built on native `sha2` digest loop |
+| SP 800-108 Counter KDF (G-PK1) | ✅ | ✅ | Implemented manually built on `hmac`/`sha2` |
+| SP 800-108 Feedback KDF (G-PK2) | ✅ | ✅ | Implemented manually built on `hmac`/`sha2` |
+| ECDH Cofactor Derive (G-PK4) | ✅ | ✅ | Mapped to standard DH (Cofactor=1 for NIST P-curves) |
 | CKM_KMAC_128 / CKM_KMAC_256 (G-KMAC1/2) | ✅ | ✅ | `C_Sign` / `C_Verify`; variable-length output |
 | Authenticated key wrap G5 (C_WrapKeyAuthenticated) | ✅ | ❌ Stub (CKR_NOT_IMPL) | |
 | Streaming sign/verify G2 | ✅ | ❌ Stub (CKR_NOT_IMPL) | |

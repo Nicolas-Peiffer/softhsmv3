@@ -9,13 +9,45 @@ use zeroize::Zeroize;
 
 use crate::constants::*;
 use crate::crypto::*;
-use crate::slh_dsa_keygen;
 use crate::state::*;
+use crate::slh_dsa_keygen;
+use rand::SeedableRng;
+use rand::rngs::OsRng;
+
+macro_rules! with_rng {
+    ($rng:ident, $body:block) => {
+        if let Some(seed) = crate::state::ACVP_SEED.with(|s| *s.borrow()) {
+            let mut $rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+            $body
+        } else {
+            let mut $rng = OsRng;
+            $body
+        }
+    };
+}
 
 // ── Session Management ───────────────────────────────────────────────────────
 
 #[wasm_bindgen(js_name = _C_Initialize)]
-pub fn C_Initialize(_p_init_args: *mut u8) -> u32 {
+pub fn C_Initialize(p_init_args: *mut u8) -> u32 {
+    unsafe {
+        if !p_init_args.is_null() {
+            let p_reserved = *(p_init_args.add(20) as *const *const u8);
+            if !p_reserved.is_null() {
+                // pReserved points to CK_ACVP_TEST_ARGS { pSeed, ulSeedLen }
+                let p_seed = *(p_reserved as *const *const u8);
+                let ul_seed_len = *(p_reserved.add(4) as *const u32);
+                if !p_seed.is_null() && ul_seed_len == 32 {
+                    let seed_slice = std::slice::from_raw_parts(p_seed, 32);
+                    let mut seed = [0u8; 32];
+                    seed.copy_from_slice(seed_slice);
+                    ACVP_SEED.with(|s| {
+                        *s.borrow_mut() = Some(seed);
+                    });
+                }
+            }
+        }
+    }
     CKR_OK
 }
 
@@ -30,6 +62,7 @@ pub fn C_Finalize(_p_reserved: *mut u8) -> u32 {
     DECRYPT_STATE.with(|s| s.borrow_mut().clear());
     DIGEST_STATE.with(|s| s.borrow_mut().clear());
     FIND_STATE.with(|s| s.borrow_mut().clear());
+    ACVP_SEED.with(|s| *s.borrow_mut() = None);
     CKR_OK
 }
 
@@ -229,8 +262,7 @@ pub fn C_GenerateKeyPair(
         match mech_type {
             CKM_ML_KEM_KEY_PAIR_GEN => {
                 use ml_kem::{EncodedSizeUser, KemCore};
-                use rand::rngs::OsRng;
-
+                
                 let ps = get_attr_ulong(
                     p_public_key_template,
                     ul_public_key_attribute_count,
@@ -280,25 +312,26 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut prv_attrs, CKA_DERIVE, false);
                 store_bool(&mut prv_attrs, CKA_LOCAL, true);
 
-                let mut rng = OsRng;
-                match ps {
-                    CKP_ML_KEM_512 => {
-                        let (dk, ek) = ml_kem::MlKem512::generate(&mut rng);
-                        pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
-                        prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
+                with_rng!(rng, {
+                    match ps {
+                        CKP_ML_KEM_512 => {
+                            let (dk, ek) = ml_kem::MlKem512::generate(&mut rng);
+                            pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
+                            prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
+                        }
+                        CKP_ML_KEM_768 => {
+                            let (dk, ek) = ml_kem::MlKem768::generate(&mut rng);
+                            pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
+                            prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
+                        }
+                        CKP_ML_KEM_1024 => {
+                            let (dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
+                            pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
+                            prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
+                        }
+                        _ => return CKR_ARGUMENTS_BAD,
                     }
-                    CKP_ML_KEM_768 => {
-                        let (dk, ek) = ml_kem::MlKem768::generate(&mut rng);
-                        pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
-                        prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
-                    }
-                    CKP_ML_KEM_1024 => {
-                        let (dk, ek) = ml_kem::MlKem1024::generate(&mut rng);
-                        pub_attrs.insert(CKA_VALUE, ek.as_bytes().as_slice().to_vec());
-                        prv_attrs.insert(CKA_VALUE, dk.as_bytes().as_slice().to_vec());
-                    }
-                    _ => return CKR_ARGUMENTS_BAD,
-                }
+                });
                 absorb_template_attrs(
                     &mut pub_attrs,
                     p_public_key_template,
@@ -526,10 +559,9 @@ pub fn C_GenerateKeyPair(
                 if !(2048..=4096).contains(&bits) {
                     return CKR_ARGUMENTS_BAD;
                 }
-                let mut rng = rand::rngs::OsRng;
-                let private_key = match rsa::RsaPrivateKey::new(&mut rng, bits) {
-                    Ok(k) => k,
-                    Err(_) => return CKR_FUNCTION_FAILED,
+                let private_key = match with_rng!(rng, { rsa::RsaPrivateKey::new(&mut rng, bits).ok() }) {
+                    Some(k) => k,
+                    None => return CKR_FUNCTION_FAILED,
                 };
                 let public_key = rsa::RsaPublicKey::from(&private_key);
 
@@ -610,7 +642,7 @@ pub fn C_GenerateKeyPair(
             }
 
             CKM_EC_KEY_PAIR_GEN => {
-                let mut rng = rand::rngs::OsRng;
+
                 let ec_params = get_attr_bytes(
                     p_public_key_template,
                     ul_public_key_attribute_count,
@@ -652,7 +684,7 @@ pub fn C_GenerateKeyPair(
                 if is_p384 {
                     store_param_set(&mut pub_attrs, CURVE_P384);
                     store_param_set(&mut prv_attrs, CURVE_P384);
-                    let sk = p384::ecdsa::SigningKey::random(&mut rng);
+                    let sk = with_rng!(rng, { p384::ecdsa::SigningKey::random(&mut rng) });
                     let vk = p384::ecdsa::VerifyingKey::from(&sk);
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
                     let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
@@ -665,7 +697,7 @@ pub fn C_GenerateKeyPair(
                 } else {
                     store_param_set(&mut pub_attrs, CURVE_P256);
                     store_param_set(&mut prv_attrs, CURVE_P256);
-                    let sk = p256::ecdsa::SigningKey::random(&mut rng);
+                    let sk = with_rng!(rng, { p256::ecdsa::SigningKey::random(&mut rng) });
                     let vk = p256::ecdsa::VerifyingKey::from(&sk);
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
                     let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
@@ -693,8 +725,7 @@ pub fn C_GenerateKeyPair(
             }
 
             CKM_EC_EDWARDS_KEY_PAIR_GEN => {
-                let mut rng = rand::rngs::OsRng;
-                let sk = ed25519_dalek::SigningKey::generate(&mut rng);
+                let sk = with_rng!(rng, { ed25519_dalek::SigningKey::generate(&mut rng) });
                 let vk = sk.verifying_key();
 
                 let mut pub_attrs = HashMap::new();
@@ -854,8 +885,7 @@ pub fn C_EncapsulateKey(
     ph_key: *mut u32,
 ) -> u32 {
     use ml_kem::{kem::Encapsulate, EncodedSizeUser, KemCore};
-    use rand::rngs::OsRng;
-
+    
     unsafe {
         let mech_type = *(p_mechanism as *const u32);
         if mech_type != CKM_ML_KEM {
@@ -882,16 +912,14 @@ pub fn C_EncapsulateKey(
             Some(v) => v,
             None => return CKR_ARGUMENTS_BAD,
         };
-        let mut rng = OsRng;
-
         macro_rules! encap {
-            ($kem:ty) => {{
+            ($kem:ty, $rng:expr) => {{
                 let ek_enc = match ml_kem::array::Array::try_from(pub_key_bytes.as_slice()) {
                     Ok(a) => a,
                     Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                 };
                 let ek = <$kem as KemCore>::EncapsulationKey::from_bytes(&ek_enc);
-                let (ct, ss) = match Encapsulate::encapsulate(&ek, &mut rng) {
+                let (ct, ss) = match Encapsulate::encapsulate(&ek, $rng) {
                     Ok(r) => r,
                     Err(_) => return CKR_FUNCTION_FAILED,
                 };
@@ -913,12 +941,14 @@ pub fn C_EncapsulateKey(
             }};
         }
 
-        match ps {
-            CKP_ML_KEM_512 => encap!(ml_kem::MlKem512),
-            CKP_ML_KEM_768 | 0 => encap!(ml_kem::MlKem768),
-            CKP_ML_KEM_1024 => encap!(ml_kem::MlKem1024),
-            _ => return CKR_ARGUMENTS_BAD,
-        }
+        with_rng!(rng, {
+            match ps {
+                CKP_ML_KEM_512 => encap!(ml_kem::MlKem512, &mut rng),
+                CKP_ML_KEM_768 | 0 => encap!(ml_kem::MlKem768, &mut rng),
+                CKP_ML_KEM_1024 => encap!(ml_kem::MlKem1024, &mut rng),
+                _ => return CKR_ARGUMENTS_BAD,
+            }
+        });
     }
     CKR_OK
 }
@@ -1606,16 +1636,17 @@ pub fn C_Encrypt(
                     Ok(k) => k,
                     Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                 };
-                let mut rng = rand::rngs::OsRng;
-                let oaep = match tag_bits {
-                    CKM_SHA384 => rsa::Oaep::new::<sha2::Sha384>(),
-                    CKM_SHA512 => rsa::Oaep::new::<sha2::Sha512>(),
-                    _ => rsa::Oaep::new::<sha2::Sha256>(),
-                };
-                match pk.encrypt(&mut rng, oaep, plaintext) {
-                    Ok(ct) => ct,
-                    Err(_) => return CKR_FUNCTION_FAILED,
-                }
+                with_rng!(rng, {
+                    let oaep = match tag_bits {
+                        CKM_SHA384 => rsa::Oaep::new::<sha2::Sha384>(),
+                        CKM_SHA512 => rsa::Oaep::new::<sha2::Sha512>(),
+                        _ => rsa::Oaep::new::<sha2::Sha256>(),
+                    };
+                    match pk.encrypt(&mut rng, oaep, plaintext) {
+                        Ok(ct) => ct,
+                        Err(_) => return CKR_FUNCTION_FAILED,
+                    }
+                })
             }
             _ => return CKR_MECHANISM_INVALID,
         };
@@ -2194,10 +2225,50 @@ pub fn C_DeriveKey(
                         }
                     }
                 };
-                if key_len <= shared.len() {
-                    shared[..key_len].to_vec()
+                let kdf = *p_param.add(0);
+                let shared_data_len = *p_param.add(1) as usize;
+                let shared_data_ptr = *p_param.add(2) as usize as *const u8;
+                let shared_data = if !shared_data_ptr.is_null() && shared_data_len > 0 {
+                    std::slice::from_raw_parts(shared_data_ptr, shared_data_len)
                 } else {
-                    shared
+                    &[]
+                };
+
+                match kdf {
+                    0x00000001 /* CKD_NULL */ => {
+                        if key_len <= shared.len() {
+                            shared[..key_len].to_vec()
+                        } else {
+                            shared
+                        }
+                    }
+                    0x00000006 /* CKD_SHA256_KDF */ 
+                    | 0x00000007 /* CKD_SHA384_KDF */ 
+                    | 0x00000008 /* CKD_SHA512_KDF */ => {
+                        use sha2::Digest;
+                        macro_rules! x963_kdf {
+                            ($Hash:ty) => {{
+                                let mut out = Vec::new();
+                                let mut counter: u32 = 1;
+                                while out.len() < key_len {
+                                    let mut hasher = <$Hash>::new();
+                                    hasher.update(&shared);
+                                    hasher.update(&counter.to_be_bytes());
+                                    hasher.update(shared_data);
+                                    out.extend_from_slice(&hasher.finalize());
+                                    counter += 1;
+                                }
+                                out.truncate(key_len);
+                                out
+                            }};
+                        }
+                        match kdf {
+                            0x00000007 => x963_kdf!(sha2::Sha384),
+                            0x00000008 => x963_kdf!(sha2::Sha512),
+                            _ => x963_kdf!(sha2::Sha256),
+                        }
+                    }
+                    _ => return CKR_MECHANISM_INVALID,
                 }
             }
 
@@ -2550,16 +2621,17 @@ pub fn C_WrapKey(
                 Ok(k) => k,
                 Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
             };
-            let mut rng = rand::rngs::OsRng;
-            let oaep = match hash_alg {
-                CKM_SHA384 => rsa::Oaep::new::<sha2::Sha384>(),
-                CKM_SHA512 => rsa::Oaep::new::<sha2::Sha512>(),
-                _ => rsa::Oaep::new::<sha2::Sha256>(),
-            };
-            match pk.encrypt(&mut rng, oaep, &key_to_wrap) {
-                Ok(ct) => ct,
-                Err(_) => return CKR_FUNCTION_FAILED,
-            }
+            with_rng!(rng, {
+                let oaep = match hash_alg {
+                    CKM_SHA384 => rsa::Oaep::new::<sha2::Sha384>(),
+                    CKM_SHA512 => rsa::Oaep::new::<sha2::Sha512>(),
+                    _ => rsa::Oaep::new::<sha2::Sha256>(),
+                };
+                match pk.encrypt(&mut rng, oaep, &key_to_wrap) {
+                    Ok(ct) => ct,
+                    Err(_) => return CKR_FUNCTION_FAILED,
+                }
+            })
         } else if is_kwp {
             use aes::cipher::generic_array::GenericArray;
             // AES-KWP (RFC 5649) — supports arbitrary-length data
