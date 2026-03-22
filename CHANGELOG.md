@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.1.0] — 2026-03-22
+
 ### Added
 
 #### Rust WASM Engine
@@ -199,5 +203,6 @@ browsers and Node.js, with post-quantum cryptography support.
 - OpenSSL ENGINE API (replaced with EVP-only backend)
 - Autotools build system (replaced with CMake)
 
-[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/pqctoday/softhsmv3/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/pqctoday/softhsmv3/releases/tag/v1.0.0
