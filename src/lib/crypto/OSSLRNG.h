@@ -37,6 +37,8 @@
 #include "ByteString.h"
 #include "RNG.h"
 
+void OSSLRNG_enableACVP(unsigned char* seed);
+
 class OSSLRNG : public RNG
 {
 public:

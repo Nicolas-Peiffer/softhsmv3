@@ -78,11 +78,20 @@ CK_RV SoftHSM::C_Initialize(CK_VOID_PTR pInitArgs)
 	{
 		args = (CK_C_INITIALIZE_ARGS_PTR)pInitArgs;
 
-		// Must be set to NULL_PTR in this version of PKCS#11
+		// Must be set to NULL_PTR in this version of PKCS#11, OR used for ACVP bypass!
 		if (args->pReserved != NULL_PTR)
 		{
-			ERROR_MSG("pReserved must be set to NULL_PTR");
-			return CKR_ARGUMENTS_BAD;
+			unsigned int* acvpArgs = (unsigned int*)args->pReserved;
+			if (acvpArgs[0] != 0 && acvpArgs[1] == 32)
+			{
+				extern void OSSLRNG_enableACVP(unsigned char* seed);
+				OSSLRNG_enableACVP((unsigned char*)(uintptr_t)acvpArgs[0]);
+			}
+			else
+			{
+				ERROR_MSG("pReserved must be set to NULL_PTR or valid ACVP args");
+				return CKR_ARGUMENTS_BAD;
+			}
 		}
 
 		// Can we spawn our own threads?

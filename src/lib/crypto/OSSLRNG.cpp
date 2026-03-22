@@ -33,6 +33,32 @@
 #include "config.h"
 #include "OSSLRNG.h"
 #include <openssl/rand.h>
+#include <string.h>
+
+bool acvp_mode = false;
+unsigned char acvp_seed[32] = {0};
+
+static int acvp_rand_bytes(unsigned char *buf, int num) {
+	for (int i = 0; i < num; i++) {
+		buf[i] = acvp_seed[i % 32];
+	}
+	return 1;
+}
+
+static RAND_METHOD acvp_rand_method = {
+	NULL,
+	acvp_rand_bytes,
+	NULL,
+	NULL,
+	acvp_rand_bytes,
+	NULL
+};
+
+void OSSLRNG_enableACVP(unsigned char* seed) {
+	acvp_mode = true;
+	memcpy(acvp_seed, seed, 32);
+	RAND_set_rand_method(&acvp_rand_method);
+}
 
 // Generate random data
 bool OSSLRNG::generateRandom(ByteString& data, const size_t len)
