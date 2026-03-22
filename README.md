@@ -2,7 +2,7 @@
 
 A modernized fork of [SoftHSM2](https://github.com/softhsm/SoftHSMv2) with **OpenSSL 3.x**, **PKCS#11 v3.2**, and **post-quantum cryptography** support — compiled to WebAssembly for use in browsers and Node.js.
 
-SoftHSMv3 ships two WASM engines with identical PKCS#11 APIs: a **C++/Emscripten** engine (OpenSSL 3.6 backend) and a **pure-Rust** engine (RustCrypto backend, ~1.3 MB). Both produce the same `_C_*` function exports and are drop-in interchangeable.
+SoftHSMv3 ships two WASM engines with identical PKCS#11 APIs: a **C++/Emscripten** engine (OpenSSL 3.6 backend) and a **pure-Rust** engine (RustCrypto backend, ~1.4 MB). Both produce the same `_C_*` function exports and are drop-in interchangeable.
 
 ## Installation
 
@@ -83,7 +83,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 | SHA-3 signature variants | Not supported | **C++:** `CKM_ECDSA_SHA3_224/256/384/512`, `CKM_RSA_SHA3_224/256/384/512_PKCS/_PKCS_PSS` — **Rust:** `CKM_ECDSA_SHA3_224/256/384/512` |
 | GOST/DES/DSA/DH | Included | Removed (focused codebase) |
 | WASM build | Not supported | **Emscripten + Rust `wasm32-unknown-unknown`** |
-| Rust WASM engine | N/A | **Pure Rust (~336 KB), drop-in parity** |
+| Rust WASM engine | N/A | **Pure Rust (~1.4 MB), drop-in parity** |
 | npm package | N/A | **@pqctoday/softhsm-wasm** |
 
 ## PQC Algorithms
@@ -265,7 +265,7 @@ CKM_ECDH1_COFACTOR_DERIVE  = 0x00001051
 
 ## Rust WASM Engine (`rust/`)
 
-The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface, compiled to `wasm32-unknown-unknown` via `wasm-bindgen`. It replaces the entire OpenSSL backend with native RustCrypto crates, producing a standalone ~1.3 MB `.wasm` binary with zero C dependencies.
+The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface, compiled to `wasm32-unknown-unknown` via `wasm-bindgen`. It replaces the entire OpenSSL backend with native RustCrypto crates, producing a standalone ~1.4 MB `.wasm` binary with zero C dependencies.
 
 ### Why Two Engines?
 
@@ -273,7 +273,7 @@ The Rust engine is a pure-Rust reimplementation of the SoftHSMv3 PKCS#11 surface
 | --- | --- | --- |
 | Crypto backend | OpenSSL 3.6 (EVP) | RustCrypto (`ml-kem`, `ml-dsa`, `slh-dsa`, `rsa`, `p256`, `p384`, `aes`, `sha2`, `sha3`) |
 | Build toolchain | Emscripten SDK + CMake + cross-compiled OpenSSL | `cargo build --target wasm32-unknown-unknown` |
-| WASM size | ~2 MB+ (OpenSSL linked) | **~1.3 MB** |
+| WASM size | ~2.3 MB (OpenSSL linked) | **~1.4 MB** |
 | C FFI | Native | None (pure Rust) |
 | Pre-hash ML-DSA/SLH-DSA | Full (10 variants each) | Full (10 variants each) |
 
@@ -385,7 +385,7 @@ cd rust
 wasm-pack build --target web --release
 
 # Output: rust/pkg/
-#   softhsmrustv3_bg.wasm  (~1.3 MB)
+#   softhsmrustv3_bg.wasm  (~1.4 MB)
 #   softhsmrustv3.js       (JS bindings)
 #   softhsmrustv3.d.ts     (TypeScript types)
 ```
@@ -513,7 +513,7 @@ cargo install wasm-pack
 
 cd rust
 wasm-pack build --target web --release
-# Output: rust/pkg/softhsmrustv3_bg.wasm (~336 KB)
+# Output: rust/pkg/softhsmrustv3_bg.wasm (~1.4 MB)
 ```
 
 ## References

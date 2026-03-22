@@ -17,9 +17,9 @@ Both engines expose the same `SoftHSMModule` interface, so existing code works w
 
 | | C++ / Emscripten | Rust |
 | --- | --- | --- |
-| Binary size | ~2.2 MB | **~182 KB** |
+| Binary size | ~2.2 MB | **~1.4 MB** |
 | Crypto backend | OpenSSL 3.6 | RustCrypto crates |
-| Pre-hash ML-DSA / SLH-DSA | Yes (10 variants each) | Not yet |
+| Pre-hash ML-DSA / SLH-DSA | Yes (10 variants each) | **Yes (10 variants each)** |
 | Build toolchain | Emscripten + CMake | `wasm-pack` |
 
 **Selecting an engine:**
@@ -39,14 +39,12 @@ Both return the same `SoftHSMModule` type — all `_C_*` function calls, `_mallo
 
 **Algorithms supported by the Rust engine:**
 
-- **Post-quantum:** ML-KEM-512/768/1024, ML-DSA-44/65/87, SLH-DSA (all 12 parameter sets)
-- **Classical:** RSA (PKCS#1 v1.5 / OAEP / PSS), ECDSA P-256/P-384, Ed25519, ECDH P-256, X25519
+- **Post-quantum:** ML-KEM-512/768/1024, ML-DSA-44/65/87 (pure + 10 pre-hash variants each),
+  SLH-DSA (all 12 parameter sets, pure + 10 pre-hash variants each)
+- **Classical:** RSA (PKCS#1 v1.5 / OAEP / PSS), ECDSA P-256/P-384 (+ SHA-3 variants), Ed25519, ECDH P-256, X25519
 - **Symmetric:** AES-128/192/256 (GCM, CBC, Key Wrap)
-- **Digest / MAC:** SHA-256/384/512, SHA3-256/512, HMAC-SHA256/384/512, HMAC-SHA3-256/512
-- **Key derivation:** HKDF (RFC 5869)
-
-> **Note:** The Rust engine does not yet support pre-hash ML-DSA (`CKM_HASH_ML_DSA_*`) or
-> pre-hash SLH-DSA (`CKM_HASH_SLH_DSA_*`) variants. Use the C++ engine if you need pre-hash signing.
+- **Digest / MAC:** SHA-256/384/512, SHA3-256/512, HMAC-SHA256/384/512, HMAC-SHA3-256/512, KMAC-128/256
+- **Key derivation:** HKDF (RFC 5869), PKCS#5 PBKDF2, SP 800-108 Counter/Feedback KDF
 
 #### New mechanisms (C++ engine)
 
