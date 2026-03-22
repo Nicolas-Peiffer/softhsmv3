@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [1.1.0] — 2026-03-22
+## [0.2.0] — 2026-03-22
 
 ### Added
 
@@ -173,7 +173,7 @@ exposing the key material:
 
 ---
 
-## [1.0.0] — 2026
+## [0.1.0] — 2026
 
 First public release of `@pqctoday/softhsm-wasm` — a PKCS#11 HSM emulator for
 browsers and Node.js, with post-quantum cryptography support.
@@ -203,6 +203,6 @@ browsers and Node.js, with post-quantum cryptography support.
 - OpenSSL ENGINE API (replaced with EVP-only backend)
 - Autotools build system (replaced with CMake)
 
-[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/pqctoday/softhsmv3/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/pqctoday/softhsmv3/releases/tag/v1.0.0
+[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pqctoday/softhsmv3/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/pqctoday/softhsmv3/releases/tag/v0.1.0
