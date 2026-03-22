@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // We load both WASM modules. They execute independently in V8.
 const cppPath = path.resolve(__dirname, '../wasm/cpp/softhsm.js');
-const rustPath = path.resolve(__dirname, '../wasm/rust/softhsm.js');
+const rustPath = path.resolve(__dirname, '../wasm/rust/softhsmrustv3.js');
 
 const { default: createCppModule } = await import(cppPath);
 const { default: createRustModule } = await import(rustPath);

@@ -19,7 +19,9 @@ pub const CKR_BUFFER_TOO_SMALL: u32 = 0x0000_0150;
 
 pub const CKA_VALUE: u32 = 0x0000_0011;
 pub const CKA_KEY_TYPE: u32 = 0x0000_0100;
+pub const CKA_MODULUS: u32 = 0x0000_0120; // PKCS#11 v3.2 §2.1.2 — RSA modulus (big-endian)
 pub const CKA_MODULUS_BITS: u32 = 0x0000_0121;
+pub const CKA_PUBLIC_EXPONENT: u32 = 0x0000_0122; // PKCS#11 v3.2 §2.1.2 — RSA public exponent
 pub const CKA_VALUE_LEN: u32 = 0x0000_0161;
 pub const CKA_EC_PARAMS: u32 = 0x0000_0180;
 pub const CKA_EC_POINT: u32 = 0x0000_0181;
@@ -64,6 +66,12 @@ pub const CKA_KEY_GEN_MECHANISM: u32 = 0x0000_0166;
 pub const CKA_CHECK_VALUE: u32 = 0x0000_0090;
 pub const CKA_ENCAPSULATE: u32 = 0x0000_0633;
 pub const CKA_DECAPSULATE: u32 = 0x0000_0634;
+pub const CKA_MODIFIABLE: u32 = 0x0000_0170;        // PKCS#11 v3.2 — mandatory for all objects (default: TRUE)
+pub const CKA_COPYABLE: u32 = 0x0000_0171;          // PKCS#11 v3.2 — mandatory for all objects (default: TRUE)
+pub const CKA_DESTROYABLE: u32 = 0x0000_0172;       // PKCS#11 v3.2 — mandatory for all objects (default: TRUE)
+pub const CKA_TRUSTED: u32 = 0x0000_0086;            // PKCS#11 v3.2 — public/secret keys (default: FALSE)
+pub const CKA_WRAP_WITH_TRUSTED: u32 = 0x0000_0210;  // PKCS#11 v3.2 — private/secret keys (default: FALSE)
+pub const CKA_ALWAYS_AUTHENTICATE: u32 = 0x0000_0202; // PKCS#11 v3.2 — private keys (default: FALSE)
 
 // Private attribute: stores the parameter set on generated keys
 pub const CKA_PRIV_PARAM_SET: u32 = 0xFFFF_0001;
@@ -108,6 +116,7 @@ pub const CKM_KMAC_256: u32 = 0x8000_0101;
 
 // Generic Secret
 pub const CKM_GENERIC_SECRET_KEY_GEN: u32 = 0x0000_0350;
+pub const CKM_UNAVAILABLE_INFORMATION: u32 = 0xFFFF_FFFF; // PKCS#11 v3.2 §4.3 — CKA_KEY_GEN_MECHANISM on imported keys
 
 // Key Derivation Functions
 pub const CKM_PKCS5_PBKD2: u32 = 0x0000_03b0;

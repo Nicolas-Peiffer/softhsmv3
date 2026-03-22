@@ -234,6 +234,75 @@ pub fn der_length(len: usize) -> Vec<u8> {
     }
 }
 
+// ── PQC SubjectPublicKeyInfo (SPKI) builders ─────────────────────────────────
+//
+// PKCS#11 v3.2 §4.14 requires CKA_PUBLIC_KEY_INFO on all public (and private) keys.
+// The SPKI format per RFC 5480 / NIST FIPS 203/204/205:
+//   SEQUENCE { AlgorithmIdentifier { OID }, BIT STRING { 0x00 || key_bytes } }
+// PQC AlgorithmIdentifiers have NO parameters (absent, not NULL).
+
+/// Build SPKI for ML-KEM-512 (OID 2.16.840.1.101.3.4.4.1)
+pub fn build_mlkem512_spki(pk: &[u8]) -> Vec<u8> {
+    // AlgId = SEQUENCE(11) { OID(9) 60 86 48 01 65 03 04 04 01 }
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x04, 0x01];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for ML-KEM-768 (OID 2.16.840.1.101.3.4.4.2)
+pub fn build_mlkem768_spki(pk: &[u8]) -> Vec<u8> {
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x04, 0x02];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for ML-KEM-1024 (OID 2.16.840.1.101.3.4.4.3)
+pub fn build_mlkem1024_spki(pk: &[u8]) -> Vec<u8> {
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x04, 0x03];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for ML-DSA-44 (OID 2.16.840.1.101.3.4.3.17)
+pub fn build_mldsa44_spki(pk: &[u8]) -> Vec<u8> {
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x11];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for ML-DSA-65 (OID 2.16.840.1.101.3.4.3.18)
+pub fn build_mldsa65_spki(pk: &[u8]) -> Vec<u8> {
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x12];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for ML-DSA-87 (OID 2.16.840.1.101.3.4.3.19)
+pub fn build_mldsa87_spki(pk: &[u8]) -> Vec<u8> {
+    let alg_id: &[u8] = &[0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x03, 0x13];
+    build_spki_from_parts(alg_id, pk)
+}
+
+/// Build SPKI for SLH-DSA given a CKP_SLH_DSA_* parameter set.
+/// OIDs from NIST FIPS 205: 2.16.840.1.101.3.4.20.{1..12}
+/// SHA2 variants: 1–6; SHAKE variants: 7–12.
+/// CKP_SLH_DSA_* constants interleave SHA2/SHAKE by security level — map to sequential OIDs.
+pub fn build_slhdsa_spki(ckp: u32, pk: &[u8]) -> Vec<u8> {
+    // Mapping from CKP constant to OID arc-20 last byte
+    let oid_last: u8 = match ckp {
+        1  => 0x01, // SHA2-128s
+        3  => 0x02, // SHA2-128f
+        5  => 0x03, // SHA2-192s
+        7  => 0x04, // SHA2-192f
+        9  => 0x05, // SHA2-256s
+        11 => 0x06, // SHA2-256f
+        2  => 0x07, // SHAKE-128s
+        4  => 0x08, // SHAKE-128f
+        6  => 0x09, // SHAKE-192s
+        8  => 0x0a, // SHAKE-192f
+        10 => 0x0b, // SHAKE-256s
+        12 => 0x0c, // SHAKE-256f
+        _  => return Vec::new(), // unknown parameter set
+    };
+    let alg_id = [0x30, 0x0b, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x14, oid_last];
+    build_spki_from_parts(&alg_id, pk)
+}
+
 // ── Pre-Hash Dispatch Helpers ────────────────────────────────────────────────
 
 /// Returns true if `mech` is one of the CKM_HASH_ML_DSA_* pre-hash variants.
@@ -647,17 +716,21 @@ pub fn verify_hmac(mech: u32, key_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) ->
     }
 }
 
-pub fn verify_rsa(mech: u32, pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<(), u32> {
+/// PKCS#11 v3.2 §2.1.2: RSA public key has CKA_MODULUS (n) and CKA_PUBLIC_EXPONENT (e).
+/// Both are unsigned big-endian byte arrays; CKA_VALUE is NOT defined for RSA public keys.
+pub fn verify_rsa(
+    mech: u32,
+    n_bytes: &[u8],
+    e_bytes: &[u8],
+    msg: &[u8],
+    sig_bytes: &[u8],
+) -> Result<(), u32> {
     use rsa::signature::Verifier;
-    if pk_bytes.len() < 8 {
+    if n_bytes.is_empty() || e_bytes.is_empty() {
         return Err(CKR_KEY_TYPE_INCONSISTENT);
     }
-    let n_len = u32::from_le_bytes([pk_bytes[0], pk_bytes[1], pk_bytes[2], pk_bytes[3]]) as usize;
-    if pk_bytes.len() < 4 + n_len + 1 {
-        return Err(CKR_KEY_TYPE_INCONSISTENT);
-    }
-    let n = rsa::BigUint::from_bytes_be(&pk_bytes[4..4 + n_len]);
-    let e = rsa::BigUint::from_bytes_be(&pk_bytes[4 + n_len..]);
+    let n = rsa::BigUint::from_bytes_be(n_bytes);
+    let e = rsa::BigUint::from_bytes_be(e_bytes);
     let public_key = rsa::RsaPublicKey::new(n, e).map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
 
     match mech {
@@ -693,7 +766,7 @@ pub fn verify_ecdsa(
                 p256::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
             vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
         }
-        (CKM_ECDSA_SHA384, CURVE_P384) => {
+        (CKM_ECDSA_SHA384, CURVE_P384) | (CKM_ECDSA_SHA384, 0) => {
             use p384::ecdsa::signature::Verifier;
             let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
                 .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;

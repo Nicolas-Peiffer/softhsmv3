@@ -1542,7 +1542,7 @@ bool P11AESSecretKeyObj::init(OSObject *inobject)
 
 	// Create attributes
 	P11Attribute* attrValue = new P11AttrValue(osobject,P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6|P11Attribute::ck7);
-	P11Attribute* attrValueLen = new P11AttrValueLen(osobject,P11Attribute::ck6);
+	P11Attribute* attrValueLen = new P11AttrValueLen(osobject);
 
 	// Initialize the attributes
 	if

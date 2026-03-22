@@ -31,7 +31,48 @@ pub struct EncryptCtx {
     pub tag_bits: u32,
 }
 
-pub fn allocate_handle(attrs: Attributes) -> u32 {
+/// Set PKCS#11 v3.2 mandatory object-management attribute defaults on a key before it
+/// is stored.  These are applied ONLY if the caller (or the engine) has not already set
+/// a value, so template-provided overrides are respected.
+///
+/// * `CKA_MODIFIABLE`         (0x170) — default `TRUE`  (object may be modified after creation)
+/// * `CKA_COPYABLE`           (0x171) — default `TRUE`  (object may be copied)
+/// * `CKA_DESTROYABLE`        (0x172) — default `TRUE`  (object may be destroyed)
+/// * `CKA_TRUSTED`            (0x086) — default `FALSE` — public keys and secret keys
+/// * `CKA_WRAP_WITH_TRUSTED`  (0x210) — default `FALSE` — private keys and secret keys
+/// * `CKA_ALWAYS_AUTHENTICATE`(0x202) — default `FALSE` — private keys only
+fn apply_object_defaults(attrs: &mut Attributes) {
+    if !attrs.contains_key(&CKA_MODIFIABLE) {
+        store_bool(attrs, CKA_MODIFIABLE, true);
+    }
+    if !attrs.contains_key(&CKA_COPYABLE) {
+        store_bool(attrs, CKA_COPYABLE, true);
+    }
+    if !attrs.contains_key(&CKA_DESTROYABLE) {
+        store_bool(attrs, CKA_DESTROYABLE, true);
+    }
+    // PKCS#11 v3.2 class-specific defaults — read CKA_CLASS to determine which to set
+    let obj_class = attrs.get(&CKA_CLASS).and_then(|v| {
+        if v.len() >= 4 { Some(u32::from_le_bytes([v[0], v[1], v[2], v[3]])) } else { None }
+    });
+    if let Some(class) = obj_class {
+        // CKA_TRUSTED: public keys + secret keys (object is not trusted-marked by default)
+        if (class == CKO_PUBLIC_KEY || class == CKO_SECRET_KEY) && !attrs.contains_key(&CKA_TRUSTED) {
+            store_bool(attrs, CKA_TRUSTED, false);
+        }
+        // CKA_WRAP_WITH_TRUSTED: private + secret keys (no forced-trusted-wrap by default)
+        if (class == CKO_PRIVATE_KEY || class == CKO_SECRET_KEY) && !attrs.contains_key(&CKA_WRAP_WITH_TRUSTED) {
+            store_bool(attrs, CKA_WRAP_WITH_TRUSTED, false);
+        }
+        // CKA_ALWAYS_AUTHENTICATE: private keys only (no per-op re-auth by default)
+        if class == CKO_PRIVATE_KEY && !attrs.contains_key(&CKA_ALWAYS_AUTHENTICATE) {
+            store_bool(attrs, CKA_ALWAYS_AUTHENTICATE, false);
+        }
+    }
+}
+
+pub fn allocate_handle(mut attrs: Attributes) -> u32 {
+    apply_object_defaults(&mut attrs);
     NEXT_HANDLE.with(|h| {
         let mut handle = h.borrow_mut();
         if *handle == u32::MAX {
@@ -52,6 +93,41 @@ pub fn get_object_value(handle: u32) -> Option<Vec<u8>> {
         objs.borrow()
             .get(&handle)
             .and_then(|attrs| attrs.get(&CKA_VALUE).cloned())
+    })
+}
+
+/// Return the raw SEC1 point bytes for an EC public key object.
+/// PKCS#11 v3.2: EC public key material lives in CKA_EC_POINT, encoded as a
+/// DER OCTET STRING wrapping the uncompressed SEC1 point (04 || x || y).
+/// Some internal paths (C_GenerateKeyPair) store the raw SEC1 bytes directly
+/// without the DER header. This function handles both formats.
+pub fn get_ec_point_sec1(handle: u32) -> Option<Vec<u8>> {
+    OBJECTS.with(|objs| {
+        objs.borrow()
+            .get(&handle)
+            .and_then(|attrs| attrs.get(&CKA_EC_POINT).cloned())
+    })
+    .map(|ec_point| {
+        // DER OCTET STRING short form: tag=0x04, then one length byte.
+        // If byte[1] equals len-2 the buffer carries the DER header; strip it.
+        if ec_point.len() > 2 && ec_point[1] as usize == ec_point.len() - 2 {
+            ec_point[2..].to_vec()
+        } else {
+            ec_point
+        }
+    })
+}
+
+/// Return (modulus, public_exponent) bytes for an RSA public key object.
+/// PKCS#11 v3.2: RSA public key material is in CKA_MODULUS + CKA_PUBLIC_EXPONENT.
+/// CKA_VALUE is NOT defined for CKO_PUBLIC_KEY/CKK_RSA objects.
+pub fn get_rsa_public_components(handle: u32) -> Option<(Vec<u8>, Vec<u8>)> {
+    OBJECTS.with(|objs| {
+        let store = objs.borrow();
+        let attrs = store.get(&handle)?;
+        let n = attrs.get(&CKA_MODULUS)?.clone();
+        let e = attrs.get(&CKA_PUBLIC_EXPONENT)?.clone();
+        Some((n, e))
     })
 }
 

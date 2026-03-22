@@ -276,7 +276,8 @@ CK_RV SoftHSM::C_EncapsulateKey
 		return CKR_FUNCTION_FAILED;
 
 	bool bOK = true;
-	bOK = bOK && osobject->setAttribute(CKA_LOCAL, false);
+	// PKCS#11 v3.2 §4.3: CKA_LOCAL=TRUE for keys derived by C_EncapsulateKey
+	bOK = bOK && osobject->setAttribute(CKA_LOCAL, true);
 	bOK = bOK && osobject->setAttribute(CKA_ALWAYS_SENSITIVE, false);
 	bOK = bOK && osobject->setAttribute(CKA_NEVER_EXTRACTABLE, false);
 
@@ -451,7 +452,8 @@ CK_RV SoftHSM::C_DecapsulateKey
 		return CKR_FUNCTION_FAILED;
 
 	bool bOK = true;
-	bOK = bOK && osobject->setAttribute(CKA_LOCAL, false);
+	// PKCS#11 v3.2 §4.3: CKA_LOCAL=TRUE for keys derived by C_DecapsulateKey
+	bOK = bOK && osobject->setAttribute(CKA_LOCAL, true);
 	bOK = bOK && osobject->setAttribute(CKA_ALWAYS_SENSITIVE, keyObj->getBooleanValue(CKA_ALWAYS_SENSITIVE, false));
 	bOK = bOK && osobject->setAttribute(CKA_NEVER_EXTRACTABLE, false);
 

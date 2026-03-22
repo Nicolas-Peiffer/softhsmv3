@@ -349,6 +349,18 @@ pub fn C_GenerateKeyPair(
                         _ => return CKR_ARGUMENTS_BAD,
                     }
                 });
+                // CKA_PUBLIC_KEY_INFO (SPKI) — PKCS#11 v3.2 §4.14
+                if let Some(pk_bytes) = pub_attrs.get(&CKA_VALUE).cloned() {
+                    let spki = match ps {
+                        CKP_ML_KEM_512  => build_mlkem512_spki(&pk_bytes),
+                        CKP_ML_KEM_768  => build_mlkem768_spki(&pk_bytes),
+                        CKP_ML_KEM_1024 => build_mlkem1024_spki(&pk_bytes),
+                        _ => Vec::new(),
+                    };
+                    if !spki.is_empty() {
+                        pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                    }
+                }
                 absorb_template_attrs(
                     &mut pub_attrs,
                     p_public_key_template,
@@ -446,6 +458,18 @@ pub fn C_GenerateKeyPair(
                         prv_attrs.insert(CKA_VALUE, sk.to_expanded().as_slice().to_vec());
                     }
                     _ => return CKR_ARGUMENTS_BAD,
+                }
+                // CKA_PUBLIC_KEY_INFO (SPKI) — PKCS#11 v3.2 §4.14
+                if let Some(pk_bytes) = pub_attrs.get(&CKA_VALUE).cloned() {
+                    let spki = match ps {
+                        CKP_ML_DSA_44 => build_mldsa44_spki(&pk_bytes),
+                        CKP_ML_DSA_65 => build_mldsa65_spki(&pk_bytes),
+                        CKP_ML_DSA_87 => build_mldsa87_spki(&pk_bytes),
+                        _ => Vec::new(),
+                    };
+                    if !spki.is_empty() {
+                        pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                    }
                 }
                 absorb_template_attrs(
                     &mut pub_attrs,
@@ -553,6 +577,13 @@ pub fn C_GenerateKeyPair(
                         slh_dsa_keygen!(slh_dsa::Shake256f, 32, pub_attrs, prv_attrs)
                     }
                     _ => return CKR_ARGUMENTS_BAD,
+                }
+                // CKA_PUBLIC_KEY_INFO (SPKI) — PKCS#11 v3.2 §4.14
+                if let Some(pk_bytes) = pub_attrs.get(&CKA_VALUE).cloned() {
+                    let spki = build_slhdsa_spki(ps, &pk_bytes);
+                    if !spki.is_empty() {
+                        pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                    }
                 }
                 absorb_template_attrs(
                     &mut pub_attrs,
@@ -711,10 +742,16 @@ pub fn C_GenerateKeyPair(
                     store_param_set(&mut prv_attrs, CURVE_P384);
                     let sk = with_rng!(rng, { p384::ecdsa::SigningKey::random(&mut rng) });
                     let vk = p384::ecdsa::VerifyingKey::from(&sk);
+                    // CKA_VALUE on private key = big-endian private scalar (PKCS#11 v3.2 §2.3.7)
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
                     let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
-                    pub_attrs.insert(CKA_VALUE, vk_bytes.clone());
-                    pub_attrs.insert(CKA_EC_POINT, vk_bytes.clone());
+                    // CKA_EC_POINT: DER OCTET STRING wrapping uncompressed SEC1 point (PKCS#11 v3.2 §2.3.3)
+                    // CKA_VALUE is NOT defined for CKO_PUBLIC_KEY/CKK_EC objects.
+                    let mut ec_point = Vec::with_capacity(2 + vk_bytes.len());
+                    ec_point.push(0x04u8); // DER OCTET STRING tag
+                    ec_point.push(vk_bytes.len() as u8); // short-form length (97 fits in 1 byte)
+                    ec_point.extend_from_slice(&vk_bytes);
+                    pub_attrs.insert(CKA_EC_POINT, ec_point);
                     // SubjectPublicKeyInfo DER for P-384 (97-byte uncompressed point)
                     // 30 76 30 10 06 07 2a86 48ce3d0201 06 05 2b81 0400 22 03 62 00 <97 bytes>
                     let spki = build_ec_spki_p384(&vk_bytes);
@@ -724,10 +761,16 @@ pub fn C_GenerateKeyPair(
                     store_param_set(&mut prv_attrs, CURVE_P256);
                     let sk = with_rng!(rng, { p256::ecdsa::SigningKey::random(&mut rng) });
                     let vk = p256::ecdsa::VerifyingKey::from(&sk);
+                    // CKA_VALUE on private key = big-endian private scalar (PKCS#11 v3.2 §2.3.7)
                     prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
                     let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
-                    pub_attrs.insert(CKA_VALUE, vk_bytes.clone());
-                    pub_attrs.insert(CKA_EC_POINT, vk_bytes.clone());
+                    // CKA_EC_POINT: DER OCTET STRING wrapping uncompressed SEC1 point (PKCS#11 v3.2 §2.3.3)
+                    // CKA_VALUE is NOT defined for CKO_PUBLIC_KEY/CKK_EC objects.
+                    let mut ec_point = Vec::with_capacity(2 + vk_bytes.len());
+                    ec_point.push(0x04u8); // DER OCTET STRING tag
+                    ec_point.push(vk_bytes.len() as u8); // short-form length (65 fits in 1 byte)
+                    ec_point.extend_from_slice(&vk_bytes);
+                    pub_attrs.insert(CKA_EC_POINT, ec_point);
                     // SubjectPublicKeyInfo DER for P-256 (65-byte uncompressed point)
                     // 30 59 30 13 06 07 2a8648ce3d0201 06 08 2a8648ce3d030107 03 42 00 <65 bytes>
                     let spki = build_ec_spki_p256(&vk_bytes);
@@ -860,7 +903,9 @@ pub fn C_GenerateKey(
                 store_bool(&mut attrs, CKA_VERIFY, false);
                 store_bool(&mut attrs, CKA_DERIVE, false);
                 store_bool(&mut attrs, CKA_LOCAL, true);
+                store_ulong(&mut attrs, CKA_KEY_GEN_MECHANISM, CKM_AES_KEY_GEN); // PKCS#11 v3.2 §4.3
                 absorb_template_attrs(&mut attrs, p_template, ul_count);
+                finalize_private_key_attrs(&mut attrs); // sets CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE
                 compute_kcv(&mut attrs);
                 *ph_key = allocate_handle(attrs);
                 CKR_OK
@@ -892,7 +937,9 @@ pub fn C_GenerateKey(
                 store_bool(&mut attrs, CKA_VERIFY, true);
                 store_bool(&mut attrs, CKA_DERIVE, false);
                 store_bool(&mut attrs, CKA_LOCAL, true);
+                store_ulong(&mut attrs, CKA_KEY_GEN_MECHANISM, CKM_GENERIC_SECRET_KEY_GEN); // PKCS#11 v3.2 §4.3
                 absorb_template_attrs(&mut attrs, p_template, ul_count);
+                finalize_private_key_attrs(&mut attrs); // sets CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE
                 compute_kcv(&mut attrs);
                 *ph_key = allocate_handle(attrs);
                 CKR_OK
@@ -967,7 +1014,12 @@ pub fn C_EncapsulateKey(
                 store_bool(&mut ss_attrs, CKA_EXTRACTABLE, true);
                 store_bool(&mut ss_attrs, CKA_SENSITIVE, false);
                 store_ulong(&mut ss_attrs, CKA_VALUE_LEN, ss.as_slice().len() as u32);
+                store_bool(&mut ss_attrs, CKA_TOKEN, false);   // PKCS#11 v3.2 §4.1 default
+                store_bool(&mut ss_attrs, CKA_PRIVATE, false); // PKCS#11 v3.2 §4.1 default
+                store_bool(&mut ss_attrs, CKA_LOCAL, true); // PKCS#11 v3.2 §4.3 — locally derived by C_EncapsulateKey
+                store_ulong(&mut ss_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_KEM); // PKCS#11 v3.2 §4.3
                 absorb_template_attrs(&mut ss_attrs, _p_template, _ul_attribute_count);
+                finalize_private_key_attrs(&mut ss_attrs); // sets CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE
                 *ph_key = allocate_handle(ss_attrs);
             }};
         }
@@ -1043,7 +1095,12 @@ pub fn C_DecapsulateKey(
                 store_bool(&mut ss_attrs, CKA_EXTRACTABLE, true);
                 store_bool(&mut ss_attrs, CKA_SENSITIVE, false);
                 store_ulong(&mut ss_attrs, CKA_VALUE_LEN, ss.as_slice().len() as u32);
+                store_bool(&mut ss_attrs, CKA_TOKEN, false);   // PKCS#11 v3.2 §4.1 default
+                store_bool(&mut ss_attrs, CKA_PRIVATE, false); // PKCS#11 v3.2 §4.1 default
+                store_bool(&mut ss_attrs, CKA_LOCAL, true); // PKCS#11 v3.2 §4.3 — locally derived by C_DecapsulateKey
+                store_ulong(&mut ss_attrs, CKA_KEY_GEN_MECHANISM, CKM_ML_KEM); // PKCS#11 v3.2 §4.3
                 absorb_template_attrs(&mut ss_attrs, _p_template, _ul_attribute_count);
+                finalize_private_key_attrs(&mut ss_attrs); // sets CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE
                 *ph_key = allocate_handle(ss_attrs);
             }};
         }
@@ -1123,6 +1180,23 @@ pub fn C_CreateObject(
                 let ps = u32::from_le_bytes([ps_bytes[0], ps_bytes[1], ps_bytes[2], ps_bytes[3]]);
                 store_param_set(&mut new_attrs, ps);
             }
+        } else if let Some(ec_params) = new_attrs.get(&CKA_EC_PARAMS).cloned() {
+            // Derive curve from CKA_EC_PARAMS OID for imported EC keys.
+            // P-384 OID (1.3.132.0.34): 06 05 2b 81 04 00 22 — last byte 0x22
+            // P-256 OID (1.2.840.10045.3.1.7): 06 07 2a 86 48 ce 3d 03 01 07 — last byte 0x07
+            let is_p384 = ec_params.len() >= 7 && ec_params[ec_params.len() - 1] == 0x22;
+            store_param_set(&mut new_attrs, if is_p384 { CURVE_P384 } else { CURVE_P256 });
+        }
+        // PKCS#11 v3.2 §4.3 — CKA_LOCAL=FALSE is mandatory for imported objects;
+        // override any caller-provided value since this is a server-managed attribute.
+        store_bool(&mut new_attrs, CKA_LOCAL, false);
+        // PKCS#11 v3.2 §4.3 — CKA_KEY_GEN_MECHANISM = CKM_UNAVAILABLE_INFORMATION for imported keys
+        if !new_attrs.contains_key(&CKA_KEY_GEN_MECHANISM) {
+            store_ulong(&mut new_attrs, CKA_KEY_GEN_MECHANISM, CKM_UNAVAILABLE_INFORMATION);
+        }
+        // Set CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE if CKA_SENSITIVE is present
+        if new_attrs.contains_key(&CKA_SENSITIVE) {
+            finalize_private_key_attrs(&mut new_attrs);
         }
         // Compute CKA_CHECK_VALUE (KCV) — PKCS#11 v3.2
         compute_kcv(&mut new_attrs);
@@ -1323,10 +1397,13 @@ pub fn C_Verify(
     };
 
     unsafe {
-        let pk_bytes = match get_object_value(hkey) {
-            Some(v) => v,
-            None => return CKR_ARGUMENTS_BAD,
-        };
+        // CKA_VALUE: raw key bytes for symmetric/asymmetric keys (RSA, HMAC, ML-DSA,
+        //            SLH-DSA, EdDSA).  May be absent for EC public keys.
+        let pk_bytes = get_object_value(hkey).unwrap_or_default();
+        // CKA_EC_POINT: PKCS#11 v3.2 standard attribute for EC public key material.
+        // get_ec_point_sec1 strips the DER OCTET STRING header when present so the
+        // result is always raw SEC1 (04 || x || y) ready for from_sec1_bytes().
+        let ec_point_bytes = get_ec_point_sec1(hkey);
         let msg = std::slice::from_raw_parts(p_data, ul_data_len as usize);
         let sig_bytes = std::slice::from_raw_parts(p_signature, ul_signature_len as usize);
         let ps = get_object_param_set(hkey);
@@ -1371,13 +1448,20 @@ pub fn C_Verify(
                 }
                 Err(e) => Err(e),
             },
+            // PKCS#11 v3.2: RSA public key material is in CKA_MODULUS + CKA_PUBLIC_EXPONENT.
+            // CKA_VALUE is NOT defined for CKO_PUBLIC_KEY/CKK_RSA objects.
             CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => {
-                verify_rsa(eff_mech, &pk_bytes, eff_msg, sig_bytes)
+                match get_rsa_public_components(hkey) {
+                    Some((n, e)) => verify_rsa(eff_mech, &n, &e, eff_msg, sig_bytes),
+                    None => Err(CKR_KEY_TYPE_INCONSISTENT),
+                }
             }
+            // PKCS#11 v3.2: EC public key material is in CKA_EC_POINT.
             CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256
-            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
-                verify_ecdsa(eff_mech, ps, &pk_bytes, eff_msg, sig_bytes)
-            }
+            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => match &ec_point_bytes {
+                Some(b) => verify_ecdsa(eff_mech, ps, b, eff_msg, sig_bytes),
+                None => Err(CKR_KEY_TYPE_INCONSISTENT),
+            },
             CKM_EDDSA => verify_eddsa(&pk_bytes, eff_msg, sig_bytes),
             CKM_EDDSA_PH => verify_eddsa_ph(&pk_bytes, eff_msg, sig_bytes),
             _ => Err(CKR_MECHANISM_INVALID),
@@ -2567,7 +2651,14 @@ pub fn C_DeriveKey(
         store_bool(&mut attrs, CKA_EXTRACTABLE, true);
         store_bool(&mut attrs, CKA_SENSITIVE, false);
         store_ulong(&mut attrs, CKA_VALUE_LEN, vlen);
+        // PKCS#11 v3.2 §4.1 defaults — caller may override via template
+        store_bool(&mut attrs, CKA_TOKEN, false);
+        store_bool(&mut attrs, CKA_PRIVATE, false);
         absorb_template_attrs(&mut attrs, p_template, ul_attribute_count);
+        // Server-managed attributes — set AFTER absorb to override any caller-provided values
+        store_bool(&mut attrs, CKA_LOCAL, true); // PKCS#11 v3.2 §4.3 — derived = locally generated
+        store_ulong(&mut attrs, CKA_KEY_GEN_MECHANISM, mech_type); // PKCS#11 v3.2 §4.3
+        finalize_private_key_attrs(&mut attrs); // sets CKA_ALWAYS_SENSITIVE + CKA_NEVER_EXTRACTABLE
         *ph_key = allocate_handle(attrs);
     }
     CKR_OK
