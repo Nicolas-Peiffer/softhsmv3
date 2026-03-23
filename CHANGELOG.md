@@ -10,6 +10,127 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0] — 2026-03-22
+
+### Security
+
+Full remediation of the March 2026 security audit (`docs/security_audit_03222026.md`).
+All 62 ACVP test vectors pass across both C++ and Rust WASM engines (31 per engine,
+zero failures, zero skips) after these changes.
+
+**Full audit report:** [`docs/security_audit_03222026.md`](docs/security_audit_03222026.md)
+
+#### HIGH severity — fixed
+
+- **RSA X.509 integer underflow (NEW-H1):** `size - ulDataLen` could underflow to
+  `SIZE_MAX` when `ulDataLen > size`, causing a heap buffer overread. Added an explicit
+  `ulDataLen > size → CKR_DATA_LEN_RANGE` guard in both sign and verify paths.
+- **AES-CBC IV length not validated (NEW-H2):** `EncryptInit` / `DecryptInit` only
+  rejected a NULL IV pointer; a non-16-byte IV silently used garbage memory as the
+  remainder. Now returns `CKR_MECHANISM_PARAM_INVALID` unless `ulParameterLen == 16`.
+- **WrapKeySym mode variable left zero (NEW-H3):** `CKM_AES_CBC` and `CKM_AES_CBC_PAD`
+  cases in both `WrapKeySym` and `UnwrapKeySym` set `algo` but never set `mode`, leaving
+  it at zero (`SymWrap::Unknown`). Now sets `mode = SymWrap::AES_KEYWRAP` /
+  `AES_KEYWRAP_PAD` so the correct cipher path is selected.
+- **pValue NULL dereference in object creation (NEW-H4):** Five required attributes
+  (`CKA_CLASS`, `CKA_KEY_TYPE`, `CKA_CERTIFICATE_TYPE`, `CKA_TOKEN`, `CKA_PRIVATE`)
+  dereferenced `pTemplate[i].pValue` without a NULL check. Now returns
+  `CKR_ATTRIBUTE_VALUE_INVALID` for any of these with a NULL value pointer.
+
+#### MEDIUM severity — fixed
+
+- **GcmMsgCtx param not wiped on reset (NEW-M1):** `Session::resetOp` called `free(param)`
+  without zeroing first; the freed region retained GCM key material until reallocated.
+  Now uses `memset(param, 0, paramLen)` before `free`.
+- **Unbounded string read in object store (NEW-M2):** `File::readString` allocates a
+  `std::vector<char>` of the on-disk `len` field; a malformed file could request GBs.
+  Capped at 64 MiB — legitimate serialised strings never approach this.
+- **Path traversal and symlink follow in Directory (NEW-M3):** `Directory::refresh` did
+  not reject entries containing `..` or `/`, and followed symlinks. Now rejects both
+  and explicitly skips `DT_LNK` entries (with `S_ISLNK` fallback for filesystems
+  that return `DT_UNKNOWN`).
+- **ML-KEM shared secret not wiped (NEW-M4):** After `C_EncapsulateKey` /
+  `C_DecapsulateKey`, both `sharedSecret` and `storedValue` are now explicitly wiped
+  via `ByteString::wipe()` before going out of scope.
+- **RSA-PSS salt length unbounded (NEW-M5):** A caller-supplied `sLen > 512` could
+  exceed the maximum salt length OpenSSL accepts, causing an EVP error or signed output
+  inconsistency. Now returns `CKR_MECHANISM_PARAM_INVALID` for `sLen > 512` at all
+  20 PSS parameter sites in `SignInit` and `VerifyInit`.
+- **Predictable PKCS#11 handle counter (NEW-M6):** `HandleManager` previously started
+  at handle 1 on every process start. A 20-bit random offset (via `RAND_bytes`) is now
+  applied at construction, making handles non-predictable across sessions.
+- **SLH-DSA pure mode accepted non-NULL parameters (NEW-M7):** `CKM_SLH_DSA` cases
+  in `SignInit` / `VerifyInit` passed without checking `pParameter`. Since the pure
+  mode takes no parameters, a non-NULL `pParameter` is now rejected with
+  `CKR_MECHANISM_PARAM_INVALID`.
+- **Rust NULL output pointer dereferences (NEW-M8/9/10):** Several Rust FFI entry
+  points (`C_GetSlotList`, `C_OpenSession`, `C_GenerateKeyPair`, `C_GenerateKey`,
+  `C_EncapsulateKey`, `C_DecapsulateKey`) wrote to caller-supplied output pointers
+  without checking for NULL. Added `.is_null()` guards returning `CKR_ARGUMENTS_BAD`.
+- **HMAC timing side-channel (NEW-M11):** `verify_hmac` used `==` comparison, which
+  short-circuits on the first mismatching byte. Replaced with
+  `subtle::ConstantTimeEq::ct_eq()` for a branch-free constant-time comparison.
+- **KMAC timing side-channel (NEW-M12):** Same issue in the KMAC verify path in
+  `ffi.rs`. Fixed with `subtle::ConstantTimeEq`.
+- **SymDecryptUpdate length overflow (NEW-M13):** `ulEncryptedDataLen + remainingSize`
+  could overflow `CK_ULONG` for large inputs. Added an explicit overflow check before
+  the addition, returning `CKR_ENCRYPTED_DATA_LEN_RANGE` on overflow.
+- **IV not zeroized on error paths (CR-05):** Six error exit paths in
+  `OSSLEVPSymmetricAlgorithm::encryptInit` and `decryptInit` returned without
+  calling `iv.wipe()`. The local `iv` ByteString now wipes on all error paths.
+
+#### Build and supply chain — fixed
+
+- **Default build type changed to Release (SC-09):** `CMakeLists.txt` now defaults
+  to `Release` instead of `RelWithDebInfo`, removing DWARF debug info from production
+  binaries.
+- **`package-lock.json` added (SC-03):** Lock file committed for reproducible `npm ci`
+  installs.
+- **Cargo files added to npm package manifest (SC-08):** `rust/Cargo.toml` and
+  `rust/Cargo.lock` included in the published `files` array.
+- **Optional GPG verification for OpenSSL (SC-01):** `build-openssl-wasm.sh` now
+  downloads the detached `.asc` signature and verifies it with `gpg --verify` when
+  GPG is available. Emits a warning rather than a hard error when GPG is absent.
+- **Cargo audit CI job (SC-04):** New `rust-audit` GitHub Actions job runs
+  `cargo audit --deny warnings` to catch known CVEs in Rust dependencies on every push.
+- **Compiler hardening flags (SC-05):** `-fstack-protector-strong` added for all
+  non-Emscripten / non-MSVC targets; `-Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack`
+  added for Linux builds.
+- **WASM maximum memory limit (WS-01):** Emscripten link flags now include
+  `-sMAXIMUM_MEMORY=536870912` (512 MiB) to prevent unbounded WASM heap growth.
+- **SECURITY.md WASM limitations section (WS-02/03):** New section documents inherent
+  WASM security constraints: no secure memory, exposed linear memory API, no ASLR,
+  recommended HTTP headers.
+
+---
+
+## [0.3.0] — 2026-03-22
+
+### Added
+
+- ACVP Validation Suite with deterministic PRNG support for both C++ and Rust engines
+- `CKA_CHECK_VALUE` (KCV) on all generated and imported keys — both engines
+- Rust WASM engine: pre-hash ML-DSA / SLH-DSA (10 variants each), KMAC-128/256,
+  SP 800-108 Counter/Feedback KDF, HKDF
+- `C_VerifySignatureInit` / `C_VerifySignature` pre-bound verification (PKCS#11 v3.2)
+- `C_WrapKeyAuthenticated` / `C_UnwrapKeyAuthenticated` (PKCS#11 v3.2)
+- `C_MessageEncryptInit` / `C_EncryptMessage` / `C_DecryptMessage` (PKCS#11 v3.0)
+- `C_SignMessageBegin` / `C_SignMessageNext` streaming message sign/verify
+- `CKA_PUBLIC_KEY_INFO` (SPKI/DER encoding for public keys)
+- `CKM_HKDF_DERIVE`, `CKM_SP800_108_COUNTER_KDF`, `CKM_SP800_108_FEEDBACK_KDF`
+- ECDSA + RSA SHA-3 signature variants (`CKM_ECDSA_SHA3_*`, `CKM_RSA_SHA3_*_PKCS`,
+  `CKM_RSA_SHA3_*_PKCS_PSS`)
+- `CKM_PKCS5_PBKD2` — password-based key derivation (PKCS#5 v2.1)
+
+### Fixed
+
+- ACVP deterministic PRNG correctness (C++ and Rust engines)
+- `C_DecryptMessageNext` null-buffer query consumed ciphertext
+- `C_VerifySignatureFinal` did not work with ML-DSA mechanisms
+- `CKP_SLH_DSA_*` and `CKM_HASH_SLH_DSA_*` constant values aligned with OASIS pkcs11t.h
+
+---
+
 ## [0.2.0] — 2026-03-22
 
 ### Added
@@ -203,6 +324,8 @@ browsers and Node.js, with post-quantum cryptography support.
 - OpenSSL ENGINE API (replaced with EVP-only backend)
 - Autotools build system (replaced with CMake)
 
-[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/pqctoday/softhsmv3/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/pqctoday/softhsmv3/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pqctoday/softhsmv3/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pqctoday/softhsmv3/releases/tag/v0.1.0

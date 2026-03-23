@@ -267,9 +267,28 @@ CKM_ECDH1_COFACTOR_DERIVE  = 0x00001051
 
 The `softhsmv3` implementations maintain strict compliance with current ACVP test vectors and the PKCS#11 v3.2 specification:
 
-- **ACVP Testing**: Both the C++ and Rust engines achieve 100% parity across all tested NIST post-quantum algorithms, natively passing 31/31 vectors in the ACVP WASM validation suite (including ML-KEM, ML-DSA, SLH-DSA, AES modes, HMAC, RSA, ECDSA, EdDSA, and KDF algorithms). No gaps exist between the two implementations.
+- **ACVP Testing (v0.4.0)**: Both the C++ and Rust engines pass **62/62** ACVP test vectors (31 per engine, zero failures, zero skips) in dual HSM mode. Coverage includes ML-KEM (Decapsulate KAT + Round-Trip), ML-DSA (SigVer KAT + Functional, all 3 variants), SLH-DSA (Functional, 2 param sets), AES-GCM/CBC/CTR/KW/KWP, HMAC-SHA256/384/512, RSA-PSS, ECDSA P-256/P-384, EdDSA Ed25519, SHA-256 (3 vectors), PBKDF2, and HKDF.
 - **PKCS#11 v3.2 Semantics**: The standalone C++ algorithmic validator (`pqc_validate`) successfully passes 66/66 deep evaluation tests, including comprehensive cryptographic round-trips and negative tampering evaluations against the compiled `libsofthsmv3.dylib`.
 - **Playground E2E**: End-to-end token integration and ACVP matrix execution are verified via automated Playwright continuous integration (`playground-softhsm-acvp.spec.ts`) in dual HSM mode.
+- **Security Audit (March 2026)**: Full remediation of all HIGH and MEDIUM findings. See [`docs/security_audit_03222026.md`](docs/security_audit_03222026.md).
+
+## Security
+
+A formal security audit was conducted in March 2026 covering C++ memory safety, PKCS#11 API validation, cryptographic implementation, WASM/JS bindings, Rust PKCS#11, and build/supply chain.
+
+**v0.4.0 status: all HIGH and MEDIUM findings resolved.**
+
+| Severity | Original | Fixed in v0.4.0 | Remaining |
+|----------|----------|-----------------|-----------|
+| Critical | 3 | 3 | 0 |
+| High | 10 | 10 | 0 |
+| Medium | 14 | 14 | 0 |
+| Low | 5 | 0 | 5 (accepted / architectural) |
+| Info | 5 | 0 | 5 (documentation / inherent) |
+
+Key fixes: RSA X.509 underflow guard, AES-CBC IV enforcement, ML-KEM secret zeroization, HMAC/KMAC constant-time comparison (`subtle::ConstantTimeEq`), symlink/path-traversal rejection, handle randomization, SLH-DSA pure-mode parameter validation, Rust NULL output pointer guards.
+
+Full report: [`docs/security_audit_03222026.md`](docs/security_audit_03222026.md)
 
 ## Rust WASM Engine (`rust/`)
 
@@ -482,6 +501,24 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
   - [x] Rust: `C_DestroyObject` state cleanup; `C_DeriveKey` `CKA_DERIVE` check
   - [x] Rust: output keys from KEM/derive carry proper attributes (`CKA_EXTRACTABLE`, `CKA_CLASS`, etc.)
   - [x] Rust: 10 admin function stubs + 8 multi-part stubs (63 total exports)
+- [x] Phase 11: Security hardening (v0.4.0) — full remediation of March 2026 audit
+  - [x] RSA X.509 integer underflow guard (sign + verify paths)
+  - [x] AES-CBC IV length enforcement (exactly 16 bytes)
+  - [x] WrapKeySym/UnwrapKeySym mode variable fix (AES-CBC/CBC-PAD)
+  - [x] pValue NULL dereference guards (CKA_CLASS/KEY_TYPE/CERT_TYPE/TOKEN/PRIVATE)
+  - [x] GcmMsgCtx param zeroization before free in Session::resetOp
+  - [x] File::readString 64 MiB OOM cap
+  - [x] Path traversal + symlink rejection in Directory::refresh
+  - [x] ML-KEM shared secret and stored value wiped after encapsulate/decapsulate
+  - [x] RSA-PSS salt length bounded to 512 bytes at all PSS parameter sites
+  - [x] HandleManager counter seeded with random offset (non-predictable handles)
+  - [x] CKM_SLH_DSA pure mode: reject non-NULL parameters
+  - [x] Rust NULL output pointer guards (C_GetSlotList, C_OpenSession, C_GenerateKeyPair, C_GenerateKey, C_EncapsulateKey, C_DecapsulateKey)
+  - [x] HMAC constant-time comparison via `subtle::ConstantTimeEq`
+  - [x] KMAC constant-time comparison via `subtle::ConstantTimeEq`
+  - [x] SymDecryptUpdate integer overflow guard
+  - [x] IV ByteString zeroization on OSSLEVPSymmetricAlgorithm error paths
+  - [x] Release build by default, compiler hardening flags, optional GPG verify for OpenSSL, cargo-audit CI
 - [x] Phase 10: SHA-3 variants, PBKDF2, 5G KDF, key wrapping completeness
   - [x] C++: `CKM_ECDSA_SHA3_224/256/384/512` — ECDSA with SHA-3 hash
   - [x] C++: `CKM_RSA_SHA3_224/256/384/512_PKCS` and `_PKCS_PSS` — RSA PKCS#1 v1.5 and PSS with SHA-3
