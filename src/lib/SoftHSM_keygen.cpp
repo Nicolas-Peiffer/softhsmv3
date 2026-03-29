@@ -3034,13 +3034,13 @@ CK_RV SoftHSM::generateGeneric
 			if (isPrivate)
 			{
 				token->encrypt(symKey.getKeyBits(), value);
-				token->encrypt(symKey.getKeyCheckValue(), kcv);
 			}
 			else
 			{
 				value = symKey.getKeyBits();
-				kcv = symKey.getKeyCheckValue();
 			}
+			// KCV is always stored in clear — PKCS#11 v3.2 §4.10.2
+			kcv = symKey.getKeyCheckValue();
 			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
 			if (checkValue)
 				bOK = bOK && osobject->setAttribute(CKA_CHECK_VALUE, kcv);
@@ -3225,13 +3225,13 @@ CK_RV SoftHSM::generateAES
 			if (isPrivate)
 			{
 				token->encrypt(key->getKeyBits(), value);
-				token->encrypt(key->getKeyCheckValue(), kcv);
 			}
 			else
 			{
 				value = key->getKeyBits();
-				kcv = key->getKeyCheckValue();
 			}
+			// KCV is always stored in clear — PKCS#11 v3.2 §4.10.2
+			kcv = key->getKeyCheckValue();
 			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
 			if (checkValue)
 				bOK = bOK && osobject->setAttribute(CKA_CHECK_VALUE, kcv);
@@ -4910,13 +4910,13 @@ CK_RV SoftHSM::deriveECDH
 				if (isPrivate)
 				{
 					token->encrypt(secretValue, value);
-					token->encrypt(plainKCV, kcv);
 				}
 				else
 				{
 					value = secretValue;
-					kcv = plainKCV;
 				}
+				// KCV is always stored in clear — PKCS#11 v3.2 §4.10.2
+				kcv = plainKCV;
 			}
 			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
 			if (checkValue)
@@ -5291,13 +5291,13 @@ CK_RV SoftHSM::deriveEDDSA
 				if (isPrivate)
 				{
 					token->encrypt(secretValue, value);
-					token->encrypt(plainKCV, kcv);
 				}
 				else
 				{
 					value = secretValue;
-					kcv = plainKCV;
 				}
+				// KCV is always stored in clear — PKCS#11 v3.2 §4.10.2
+				kcv = plainKCV;
 			}
 			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
 			if (checkValue)
@@ -5776,13 +5776,13 @@ CK_RV SoftHSM::deriveSymmetric
 				if (isPrivate)
 				{
 					token->encrypt(secretValue, value);
-					token->encrypt(plainKCV, kcv);
 				}
 				else
 				{
 					value = secretValue;
-					kcv = plainKCV;
 				}
+				// KCV is always stored in clear — PKCS#11 v3.2 §4.10.2
+				kcv = plainKCV;
 			}
 			bOK = bOK && osobject->setAttribute(CKA_VALUE, value);
 			if (checkValue)
