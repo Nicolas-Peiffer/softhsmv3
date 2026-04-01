@@ -39,6 +39,8 @@
 #include "OSSLSLHDSAPrivateKey.h"
 #include <openssl/evp.h>
 #include <openssl/err.h>
+#include <openssl/core_names.h>
+#include <openssl/params.h>
 #include <string.h>
 
 // ─── Pre-hash support (FIPS 205 §10.1, HashSLH-DSA) ─────────────────────────
@@ -318,12 +320,38 @@ bool OSSLSLHDSA::sign(PrivateKey* privateKey, const ByteString& dataToSign,
 	EVP_MD_CTX* ctx = EVP_MD_CTX_new();
 	if (ctx == NULL) { ERROR_MSG("EVP_MD_CTX_new failed"); return false; }
 
-	if (!EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey))
+	// Build OSSL_PARAM array for context string (FIPS 205 §9.2) and
+	// deterministic mode (FIPS 205 §10). Must be built BEFORE EVP_DigestSignInit_ex
+	// so the params are passed directly to slh_dsa_digest_signverify_init.
+	OSSL_PARAM osslParams[3];
+	int nParams = 0;
+	int deterministic = 0;
+	if (slhdsaParams)
+	{
+		if (slhdsaParams->contextLen > 0)
+		{
+			osslParams[nParams++] = OSSL_PARAM_construct_octet_string(
+				OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+				(void*)slhdsaParams->context, slhdsaParams->contextLen);
+		}
+		if (slhdsaParams->deterministic)
+		{
+			deterministic = 1;
+			osslParams[nParams++] = OSSL_PARAM_construct_int(
+				OSSL_SIGNATURE_PARAM_DETERMINISTIC, &deterministic);
+		}
+	}
+	osslParams[nParams] = OSSL_PARAM_construct_end();
+
+	EVP_PKEY_CTX* pkeyCtx = NULL;
+	if (!EVP_DigestSignInit_ex(ctx, &pkeyCtx, NULL, NULL, NULL, pkey,
+	                           nParams > 0 ? osslParams : NULL))
 	{
 		ERROR_MSG("SLH-DSA sign init failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
 		return false;
 	}
+
 	if (!EVP_DigestSign(ctx, &signature[0], &sigLen, signData, signDataLen))
 	{
 		ERROR_MSG("SLH-DSA sign failed (0x%08X)", ERR_get_error());
@@ -404,12 +432,27 @@ bool OSSLSLHDSA::verify(PublicKey* publicKey, const ByteString& originalData,
 	EVP_MD_CTX* ctx = EVP_MD_CTX_new();
 	if (ctx == NULL) { ERROR_MSG("EVP_MD_CTX_new failed"); return false; }
 
-	if (!EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey))
+	// Build OSSL_PARAM for context string (FIPS 205 §9.2). Pass directly to
+	// EVP_DigestVerifyInit_ex so slh_dsa_digest_signverify_init receives them.
+	OSSL_PARAM osslParams[2];
+	int nParams = 0;
+	if (slhdsaParams && slhdsaParams->contextLen > 0)
+	{
+		osslParams[nParams++] = OSSL_PARAM_construct_octet_string(
+			OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+			(void*)slhdsaParams->context, slhdsaParams->contextLen);
+	}
+	osslParams[nParams] = OSSL_PARAM_construct_end();
+
+	EVP_PKEY_CTX* pkeyCtx = NULL;
+	if (!EVP_DigestVerifyInit_ex(ctx, &pkeyCtx, NULL, NULL, NULL, pkey,
+	                             nParams > 0 ? osslParams : NULL))
 	{
 		ERROR_MSG("SLH-DSA verify init failed (0x%08X)", ERR_get_error());
 		EVP_MD_CTX_free(ctx);
 		return false;
 	}
+
 	int ret = EVP_DigestVerify(ctx,
 	                           signature.const_byte_str(), signature.size(),
 	                           verifyData, verifyDataLen);

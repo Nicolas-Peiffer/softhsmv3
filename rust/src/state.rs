@@ -9,8 +9,8 @@ use crate::crypto::*;
 thread_local! {
     pub static OBJECTS: RefCell<HashMap<u32, Attributes>> = RefCell::new(HashMap::new());
     pub static NEXT_HANDLE: RefCell<u32> = const { RefCell::new(100) };
-    pub static SIGN_STATE: RefCell<HashMap<u32, (u32, u32)>> = RefCell::new(HashMap::new());
-    pub static VERIFY_STATE: RefCell<HashMap<u32, (u32, u32)>> = RefCell::new(HashMap::new());
+    pub static SIGN_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
+    pub static VERIFY_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
     pub static ENCRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
     pub static DECRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
     pub static DIGEST_STATE: RefCell<HashMap<u32, DigestCtx>> = RefCell::new(HashMap::new());

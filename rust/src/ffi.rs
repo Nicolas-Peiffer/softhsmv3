@@ -1289,11 +1289,40 @@ pub fn C_SignInit(h_session: u32, p_mechanism: *mut u8, h_key: u32) -> u32 {
                 }
             }
         }
+        // Parse CK_SIGN_ADDITIONAL_CONTEXT for SLH-DSA (FIPS 205 §9.2 + §10)
+        let (slh_ctx, slh_det) = if mech_type == CKM_SLH_DSA {
+            parse_slh_dsa_ctx(p_mechanism)
+        } else {
+            (Vec::new(), false)
+        };
         SIGN_STATE.with(|s| {
-            s.borrow_mut().insert(h_session, (mech_type, h_key));
+            s.borrow_mut().insert(h_session, (mech_type, h_key, slh_ctx, slh_det));
         });
     }
     CKR_OK
+}
+
+/// Parse CK_SIGN_ADDITIONAL_CONTEXT from a CK_MECHANISM pointer (WASM32, 12-byte param struct).
+/// Returns (context_bytes, deterministic). Safe only when p_mechanism is non-null and valid.
+unsafe fn parse_slh_dsa_ctx(p_mechanism: *const u8) -> (Vec<u8>, bool) {
+    // CK_MECHANISM layout (WASM32): mechType(4) + pParameter(4) + ulParameterLen(4)
+    let p_param = *(p_mechanism.add(4) as *const u32);
+    let param_len = *(p_mechanism.add(8) as *const u32);
+    // CK_SIGN_ADDITIONAL_CONTEXT is 12 bytes: hedgeVariant(4) + pContext(4) + ulContextLen(4)
+    if p_param == 0 || param_len < 12 {
+        return (Vec::new(), false);
+    }
+    let p_param = p_param as *const u8;
+    let hedge = *(p_param as *const u32);
+    let ctx_ptr = *((p_param as *const u32).add(1));
+    let ctx_len = *((p_param as *const u32).add(2)) as usize;
+    let deterministic = hedge == CKH_DETERMINISTIC_REQUIRED;
+    let context = if ctx_ptr != 0 && ctx_len > 0 && ctx_len <= 255 {
+        std::slice::from_raw_parts(ctx_ptr as *const u8, ctx_len).to_vec()
+    } else {
+        Vec::new()
+    };
+    (context, deterministic)
 }
 
 #[wasm_bindgen(js_name = _C_Sign)]
@@ -1305,8 +1334,8 @@ pub fn C_Sign(
     pul_signature_len: *mut u32,
 ) -> u32 {
     // Peek first to support the size-query path (p_signature == null) without consuming state.
-    let state = SIGN_STATE.with(|s| s.borrow().get(&h_session).copied());
-    let (mech, hkey) = match state {
+    let state = SIGN_STATE.with(|s| s.borrow().get(&h_session).cloned());
+    let (mech, hkey, ctx_bytes, deterministic) = match state {
         Some(s) => s,
         None => return CKR_OPERATION_NOT_INITIALIZED,
     };
@@ -1352,7 +1381,7 @@ pub fn C_Sign(
 
         let result = match eff_mech {
             CKM_ML_DSA => sign_ml_dsa(ps, &sk_bytes, eff_msg),
-            CKM_SLH_DSA => sign_slh_dsa(ps, &sk_bytes, eff_msg),
+            CKM_SLH_DSA => sign_slh_dsa(ps, &sk_bytes, eff_msg, &ctx_bytes, deterministic),
             CKM_SHA256_HMAC | CKM_SHA384_HMAC | CKM_SHA512_HMAC | CKM_SHA3_256_HMAC
             | CKM_SHA3_512_HMAC => sign_hmac(eff_mech, &sk_bytes, eff_msg),
             CKM_KMAC_128 | CKM_KMAC_256 => sign_kmac(eff_mech, &sk_bytes, eff_msg),
@@ -1412,8 +1441,14 @@ pub fn C_VerifyInit(h_session: u32, p_mechanism: *mut u8, h_key: u32) -> u32 {
                 }
             }
         }
+        // Parse CK_SIGN_ADDITIONAL_CONTEXT for SLH-DSA (context string, FIPS 205 §9.2)
+        let (slh_ctx, slh_det) = if mech_type == CKM_SLH_DSA {
+            parse_slh_dsa_ctx(p_mechanism)
+        } else {
+            (Vec::new(), false)
+        };
         VERIFY_STATE.with(|s| {
-            s.borrow_mut().insert(h_session, (mech_type, h_key));
+            s.borrow_mut().insert(h_session, (mech_type, h_key, slh_ctx, slh_det));
         });
     }
     CKR_OK
@@ -1427,8 +1462,8 @@ pub fn C_Verify(
     p_signature: *mut u8,
     ul_signature_len: u32,
 ) -> u32 {
-    let state = VERIFY_STATE.with(|s| s.borrow().get(&h_session).copied());
-    let (mech, hkey) = match state {
+    let state = VERIFY_STATE.with(|s| s.borrow().get(&h_session).cloned());
+    let (mech, hkey, ctx_bytes, _deterministic) = match state {
         Some(s) => s,
         None => return CKR_OPERATION_NOT_INITIALIZED,
     };
@@ -1472,7 +1507,7 @@ pub fn C_Verify(
 
         let rv = match match eff_mech {
             CKM_ML_DSA => verify_ml_dsa(ps, &pk_bytes, eff_msg, sig_bytes),
-            CKM_SLH_DSA => verify_slh_dsa(ps, &pk_bytes, eff_msg, sig_bytes),
+            CKM_SLH_DSA => verify_slh_dsa(ps, &pk_bytes, eff_msg, sig_bytes, &ctx_bytes),
             CKM_SHA256_HMAC | CKM_SHA384_HMAC | CKM_SHA512_HMAC | CKM_SHA3_256_HMAC
             | CKM_SHA3_512_HMAC => verify_hmac(eff_mech, &pk_bytes, eff_msg, sig_bytes),
             CKM_KMAC_128 | CKM_KMAC_256 => match sign_kmac(eff_mech, &pk_bytes, eff_msg) {
@@ -1530,7 +1565,7 @@ pub fn C_SignMessage(
     p_signature: *mut u8,
     pul_signature_len: *mut u32,
 ) -> u32 {
-    let saved = SIGN_STATE.with(|s| s.borrow().get(&h_session).copied());
+    let saved = SIGN_STATE.with(|s| s.borrow().get(&h_session).cloned());
     let rv = C_Sign(
         h_session,
         p_data,
@@ -1575,7 +1610,7 @@ pub fn C_VerifyMessage(
     p_signature: *mut u8,
     ul_signature_len: u32,
 ) -> u32 {
-    let saved = VERIFY_STATE.with(|s| s.borrow().get(&h_session).copied());
+    let saved = VERIFY_STATE.with(|s| s.borrow().get(&h_session).cloned());
     let rv = C_Verify(
         h_session,
         p_data,

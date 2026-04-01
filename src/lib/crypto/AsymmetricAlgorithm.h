@@ -173,6 +173,7 @@ struct MLDSA_SIGN_PARAMS
 // Inline 255-byte context buffer avoids dangling pointers from Session::setParameters memcpy.
 struct SLHDSA_SIGN_PARAMS
 {
+	bool deterministic;          // CKH_DETERMINISTIC_REQUIRED → true (FIPS 205 §10)
 	bool preHash;                // true for CKM_HASH_SLH_DSA_* mechanisms
 	HashAlgo::Type hashAlg;      // hash algorithm (only when preHash=true)
 	size_t contextLen;           // 0-255

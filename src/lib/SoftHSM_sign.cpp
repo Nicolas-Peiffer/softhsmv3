@@ -376,6 +376,9 @@ static CK_RV parseSLHDSASignContext(CK_MECHANISM_PTR pMechanism, SLHDSA_SIGN_PAR
 		CK_SIGN_ADDITIONAL_CONTEXT* ctx =
 			(CK_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
 
+		// Honor deterministic mode (FIPS 205 §10); other hedgeVariants accepted but ignored
+		out.deterministic = (ctx->hedgeVariant == CKH_DETERMINISTIC_REQUIRED);
+
 		if (ctx->ulContextLen > 255)
 		{
 			ERROR_MSG("SLH-DSA context string too long (%lu, max 255)",
@@ -396,7 +399,7 @@ static CK_RV parseSLHDSASignContext(CK_MECHANISM_PTR pMechanism, SLHDSA_SIGN_PAR
 	}
 	else
 	{
-		// CK_HASH_SIGN_ADDITIONAL_CONTEXT: hedgeVariant (ignored) + context + hash
+		// CK_HASH_SIGN_ADDITIONAL_CONTEXT: hedgeVariant + context + hash
 		if (pMechanism->ulParameterLen != sizeof(CK_HASH_SIGN_ADDITIONAL_CONTEXT))
 		{
 			ERROR_MSG("Invalid HashSLH-DSA parameter size (%lu, expected %lu)",
@@ -406,6 +409,9 @@ static CK_RV parseSLHDSASignContext(CK_MECHANISM_PTR pMechanism, SLHDSA_SIGN_PAR
 		}
 		CK_HASH_SIGN_ADDITIONAL_CONTEXT* ctx =
 			(CK_HASH_SIGN_ADDITIONAL_CONTEXT*)pMechanism->pParameter;
+
+		// Honor deterministic mode (FIPS 205 §10)
+		out.deterministic = (ctx->hedgeVariant == CKH_DETERMINISTIC_REQUIRED);
 
 		if (ctx->ulContextLen > 255)
 		{
@@ -889,10 +895,14 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 		HASH_MLDSA_CASE(CKM_HASH_ML_DSA_SHAKE256, HASH_MLDSA_SHAKE256, SHAKE256)
 #undef HASH_MLDSA_CASE
 		case CKM_SLH_DSA:
-			if (pMechanism->pParameter != NULL_PTR || pMechanism->ulParameterLen != 0)
+			// PKCS#11 v3.2: CKM_SLH_DSA accepts optional CK_SIGN_ADDITIONAL_CONTEXT
+			// for context string (FIPS 205 §9.2) and deterministic mode (FIPS 205 §10).
+			if (pMechanism->pParameter != NULL_PTR)
 			{
-				ERROR_MSG("CKM_SLH_DSA pure mode does not accept parameters");
-				return CKR_MECHANISM_PARAM_INVALID;
+				CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam);
+				if (rv2 != CKR_OK) return rv2;
+				param = &slhdsaSignParam;
+				paramLen = sizeof(slhdsaSignParam);
 			}
 			mechanism = AsymMech::SLHDSA;
 			bAllowMultiPartOp = false;
@@ -2042,10 +2052,14 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 		HASH_MLDSA_CASE(CKM_HASH_ML_DSA_SHAKE256, HASH_MLDSA_SHAKE256, SHAKE256)
 #undef HASH_MLDSA_CASE
 		case CKM_SLH_DSA:
-			if (pMechanism->pParameter != NULL_PTR || pMechanism->ulParameterLen != 0)
+			// PKCS#11 v3.2: CKM_SLH_DSA accepts optional CK_SIGN_ADDITIONAL_CONTEXT
+			// for context string (FIPS 205 §9.2) and deterministic mode (FIPS 205 §10).
+			if (pMechanism->pParameter != NULL_PTR)
 			{
-				ERROR_MSG("CKM_SLH_DSA pure mode does not accept parameters");
-				return CKR_MECHANISM_PARAM_INVALID;
+				CK_RV rv2 = parseSLHDSASignContext(pMechanism, slhdsaSignParam);
+				if (rv2 != CKR_OK) return rv2;
+				param = &slhdsaSignParam;
+				paramLen = sizeof(slhdsaSignParam);
 			}
 			mechanism = AsymMech::SLHDSA;
 			bAllowMultiPartOp = false;

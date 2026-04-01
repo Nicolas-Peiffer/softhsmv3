@@ -96,6 +96,9 @@ pub const CKM_ML_DSA: u32 = 0x0000_001D;
 pub const CKM_SLH_DSA_KEY_PAIR_GEN: u32 = 0x0000_002D;
 pub const CKM_SLH_DSA: u32 = 0x0000_002E;
 
+// CKH_ hedge/determinism constants (PKCS#11 v3.2 §7.3)
+pub const CKH_DETERMINISTIC_REQUIRED: u32 = 0x0000_0002;
+
 // SHA Digest
 pub const CKM_SHA256: u32 = 0x0000_0250;
 pub const CKM_SHA384: u32 = 0x0000_0260;

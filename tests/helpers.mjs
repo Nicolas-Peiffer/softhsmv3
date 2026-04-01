@@ -712,6 +712,112 @@ export function slhdsaVerify(M, hSession, handle, textMsg, sig) {
   return verify(M, hSession, handle, textMsg, sig, CK.CKM_SLH_DSA)
 }
 
+// ── SLH-DSA ACVP context/deterministic helpers ──────────────────────────────
+
+/** Import an SLH-DSA public key (CKO_PUBLIC_KEY) for ACVP SigVer KATs. */
+export function importSLHDSAPublicKey(M, hSession, ckp, pkBytes) {
+  const tpl = buildTemplate(M, [
+    { type: CK.CKA_CLASS,         value: CK.CKO_PUBLIC_KEY },
+    { type: CK.CKA_KEY_TYPE,      value: CK.CKK_SLH_DSA },
+    { type: CK.CKA_TOKEN,         value: false },
+    { type: CK.CKA_VERIFY,        value: true },
+    { type: CK.CKA_PARAMETER_SET, value: ckp },
+    { type: CK.CKA_VALUE,         value: pkBytes },
+  ])
+  const hPtr = allocUlong(M)
+  check('C_CreateObject(SLH-DSA-Pub)', M._C_CreateObject(hSession, tpl.arrPtr, tpl.count, hPtr))
+  const handle = readUlong(M, hPtr)
+  freeTemplate(M, tpl)
+  freePtr(M, hPtr)
+  return handle
+}
+
+/** Import an SLH-DSA private key (CKO_PRIVATE_KEY) for ACVP SigGen KATs. */
+export function importSLHDSAPrivateKey(M, hSession, ckp, skBytes) {
+  const tpl = buildTemplate(M, [
+    { type: CK.CKA_CLASS,         value: CK.CKO_PRIVATE_KEY },
+    { type: CK.CKA_KEY_TYPE,      value: CK.CKK_SLH_DSA },
+    { type: CK.CKA_TOKEN,         value: false },
+    { type: CK.CKA_SIGN,          value: true },
+    { type: CK.CKA_EXTRACTABLE,   value: false },
+    { type: CK.CKA_SENSITIVE,     value: true },
+    { type: CK.CKA_PARAMETER_SET, value: ckp },
+    { type: CK.CKA_VALUE,         value: skBytes },
+  ])
+  const hPtr = allocUlong(M)
+  check('C_CreateObject(SLH-DSA-Priv)', M._C_CreateObject(hSession, tpl.arrPtr, tpl.count, hPtr))
+  const handle = readUlong(M, hPtr)
+  freeTemplate(M, tpl)
+  freePtr(M, hPtr)
+  return handle
+}
+
+/**
+ * Build a CK_SIGN_ADDITIONAL_CONTEXT in WASM heap (PKCS#11 v3.2 §5.3).
+ * Layout (12 bytes, WASM32): hedgeVariant(4) | pContext(4) | ulContextLen(4)
+ * Returns { paramPtr, paramLen, allocPtrs } — caller must free allocPtrs after use.
+ */
+export function buildSlhDsaCtxParam(M, ctxBytes, deterministic = false) {
+  const allocPtrs = []
+  const paramPtr = M._malloc(CK.CK_SIGN_ADDITIONAL_CONTEXT_SIZE)
+  allocPtrs.push(paramPtr)
+  const hedge = deterministic ? CK.CKH_DETERMINISTIC_REQUIRED : CK.CKH_HEDGE_PREFERRED
+  M.setValue(paramPtr + 0, hedge, 'i32')
+  if (ctxBytes && ctxBytes.length > 0) {
+    const ctxPtr = writeBytes(M, ctxBytes)
+    allocPtrs.push(ctxPtr)
+    M.setValue(paramPtr + 4, ctxPtr, 'i32')
+    M.setValue(paramPtr + 8, ctxBytes.length, 'i32')
+  } else {
+    M.setValue(paramPtr + 4, 0, 'i32')
+    M.setValue(paramPtr + 8, 0, 'i32')
+  }
+  return { paramPtr, paramLen: CK.CK_SIGN_ADDITIONAL_CONTEXT_SIZE, allocPtrs }
+}
+
+/**
+ * SLH-DSA sign raw bytes with optional context + deterministic mode (FIPS 205 §9.2 / §10).
+ * Uses C_SignInit + C_Sign with CK_SIGN_ADDITIONAL_CONTEXT parameter on CKM_SLH_DSA.
+ */
+export function slhdsaSignBytesCtx(M, hSession, handle, msgBytes, ctxBytes, deterministic = false) {
+  const ctxParam = buildSlhDsaCtxParam(M, ctxBytes, deterministic)
+  const mechPtr = buildMech(M, CK.CKM_SLH_DSA, ctxParam.paramPtr, ctxParam.paramLen)
+  check('C_SignInit(SLH-DSA-ctx)', M._C_SignInit(hSession, mechPtr, handle))
+  const msgPtr = writeBytes(M, msgBytes)
+  const sigLenPtr = allocUlong(M)
+  check('C_Sign(SLH-DSA-ctx,len)', M._C_Sign(hSession, msgPtr, msgBytes.length, 0, sigLenPtr))
+  const sigLen = readUlong(M, sigLenPtr)
+  const sigPtr = M._malloc(sigLen)
+  M.setValue(sigLenPtr, sigLen, 'i32')
+  check('C_Sign(SLH-DSA-ctx)', M._C_Sign(hSession, msgPtr, msgBytes.length, sigPtr, sigLenPtr))
+  const actualLen = readUlong(M, sigLenPtr)
+  const result = new Uint8Array(M.HEAPU8.buffer, sigPtr, actualLen).slice()
+  ctxParam.allocPtrs.forEach((p) => M._free(p))
+  M._free(mechPtr)
+  M._free(msgPtr)
+  M._free(sigPtr)
+  freePtr(M, sigLenPtr)
+  return result
+}
+
+/**
+ * SLH-DSA verify raw bytes with optional context string (FIPS 205 §9.2).
+ * Uses C_VerifyInit + C_Verify with CK_SIGN_ADDITIONAL_CONTEXT parameter on CKM_SLH_DSA.
+ */
+export function slhdsaVerifyBytesCtx(M, hSession, handle, msgBytes, sigBytes, ctxBytes) {
+  const ctxParam = buildSlhDsaCtxParam(M, ctxBytes, false)
+  const mechPtr = buildMech(M, CK.CKM_SLH_DSA, ctxParam.paramPtr, ctxParam.paramLen)
+  check('C_VerifyInit(SLH-DSA-ctx)', M._C_VerifyInit(hSession, mechPtr, handle))
+  const msgPtr = writeBytes(M, msgBytes)
+  const sigPtr = writeBytes(M, sigBytes)
+  const rv = M._C_Verify(hSession, msgPtr, msgBytes.length, sigPtr, sigBytes.length)
+  ctxParam.allocPtrs.forEach((p) => M._free(p))
+  M._free(mechPtr)
+  M._free(msgPtr)
+  M._free(sigPtr)
+  return rv === CK.CKR_OK
+}
+
 /** EdDSA sign (text message) */
 export function eddsaSign(M, hSession, handle, textMsg) {
   return sign(M, hSession, handle, textMsg, CK.CKM_EDDSA)

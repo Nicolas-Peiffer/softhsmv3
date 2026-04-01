@@ -148,11 +148,19 @@ macro_rules! slh_dsa_keygen {
 
 #[macro_export]
 macro_rules! slh_dsa_sign {
-    ($ps:ty, $sk_bytes:expr, $msg:expr) => {{
+    ($ps:ty, $sk_bytes:expr, $msg:expr, $ctx:expr, $deterministic:expr) => {{
         let sk = slh_dsa::SigningKey::<$ps>::try_from($sk_bytes)
             .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+        // FIPS 205 §10: deterministic mode uses PK.seed as opt_rand.
+        // SK layout: SK.seed(n) || SK.prf(n) || PK.seed(n) || PK.root(n); n = len/4.
+        let entropy: Option<&[u8]> = if $deterministic {
+            let n = $sk_bytes.len() / 4;
+            Some(&$sk_bytes[2 * n..3 * n])
+        } else {
+            None
+        };
         let sig = sk
-            .try_sign_with_context($msg, &[], None)
+            .try_sign_with_context($msg, $ctx, entropy)
             .map_err(|_| CKR_FUNCTION_FAILED)?;
         Ok(sig.to_vec())
     }};
@@ -160,12 +168,12 @@ macro_rules! slh_dsa_sign {
 
 #[macro_export]
 macro_rules! slh_dsa_verify {
-    ($ps:ty, $pk_bytes:expr, $msg:expr, $sig_bytes:expr) => {{
+    ($ps:ty, $pk_bytes:expr, $msg:expr, $sig_bytes:expr, $ctx:expr) => {{
         let vk = slh_dsa::VerifyingKey::<$ps>::try_from($pk_bytes)
             .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
         let sig =
             slh_dsa::Signature::<$ps>::try_from($sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
-        vk.try_verify_with_context($msg, &[], &sig)
+        vk.try_verify_with_context($msg, $ctx, &sig)
             .map_err(|_| CKR_SIGNATURE_INVALID)
     }};
 }
@@ -433,20 +441,20 @@ pub fn sign_ml_dsa(ps: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<Vec<u8>, u32>
     }
 }
 
-pub fn sign_slh_dsa(ps: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<Vec<u8>, u32> {
+pub fn sign_slh_dsa(ps: u32, sk_bytes: &[u8], msg: &[u8], ctx: &[u8], deterministic: bool) -> Result<Vec<u8>, u32> {
     match ps {
-        CKP_SLH_DSA_SHA2_128S => slh_dsa_sign!(slh_dsa::Sha2_128s, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_128S => slh_dsa_sign!(slh_dsa::Shake128s, sk_bytes, msg),
-        CKP_SLH_DSA_SHA2_128F => slh_dsa_sign!(slh_dsa::Sha2_128f, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_128F => slh_dsa_sign!(slh_dsa::Shake128f, sk_bytes, msg),
-        CKP_SLH_DSA_SHA2_192S => slh_dsa_sign!(slh_dsa::Sha2_192s, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_192S => slh_dsa_sign!(slh_dsa::Shake192s, sk_bytes, msg),
-        CKP_SLH_DSA_SHA2_192F => slh_dsa_sign!(slh_dsa::Sha2_192f, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_192F => slh_dsa_sign!(slh_dsa::Shake192f, sk_bytes, msg),
-        CKP_SLH_DSA_SHA2_256S => slh_dsa_sign!(slh_dsa::Sha2_256s, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_256S => slh_dsa_sign!(slh_dsa::Shake256s, sk_bytes, msg),
-        CKP_SLH_DSA_SHA2_256F => slh_dsa_sign!(slh_dsa::Sha2_256f, sk_bytes, msg),
-        CKP_SLH_DSA_SHAKE_256F => slh_dsa_sign!(slh_dsa::Shake256f, sk_bytes, msg),
+        CKP_SLH_DSA_SHA2_128S => slh_dsa_sign!(slh_dsa::Sha2_128s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_128S => slh_dsa_sign!(slh_dsa::Shake128s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHA2_128F => slh_dsa_sign!(slh_dsa::Sha2_128f, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_128F => slh_dsa_sign!(slh_dsa::Shake128f, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHA2_192S => slh_dsa_sign!(slh_dsa::Sha2_192s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_192S => slh_dsa_sign!(slh_dsa::Shake192s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHA2_192F => slh_dsa_sign!(slh_dsa::Sha2_192f, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_192F => slh_dsa_sign!(slh_dsa::Shake192f, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHA2_256S => slh_dsa_sign!(slh_dsa::Sha2_256s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_256S => slh_dsa_sign!(slh_dsa::Shake256s, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHA2_256F => slh_dsa_sign!(slh_dsa::Sha2_256f, sk_bytes, msg, ctx, deterministic),
+        CKP_SLH_DSA_SHAKE_256F => slh_dsa_sign!(slh_dsa::Shake256f, sk_bytes, msg, ctx, deterministic),
         _ => Err(CKR_KEY_TYPE_INCONSISTENT),
     }
 }
@@ -689,20 +697,20 @@ pub fn verify_ml_dsa(ps: u32, pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> 
     }
 }
 
-pub fn verify_slh_dsa(ps: u32, pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<(), u32> {
+pub fn verify_slh_dsa(ps: u32, pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8], ctx: &[u8]) -> Result<(), u32> {
     match ps {
-        CKP_SLH_DSA_SHA2_128S => slh_dsa_verify!(slh_dsa::Sha2_128s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_128S => slh_dsa_verify!(slh_dsa::Shake128s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHA2_128F => slh_dsa_verify!(slh_dsa::Sha2_128f, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_128F => slh_dsa_verify!(slh_dsa::Shake128f, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHA2_192S => slh_dsa_verify!(slh_dsa::Sha2_192s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_192S => slh_dsa_verify!(slh_dsa::Shake192s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHA2_192F => slh_dsa_verify!(slh_dsa::Sha2_192f, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_192F => slh_dsa_verify!(slh_dsa::Shake192f, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHA2_256S => slh_dsa_verify!(slh_dsa::Sha2_256s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_256S => slh_dsa_verify!(slh_dsa::Shake256s, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHA2_256F => slh_dsa_verify!(slh_dsa::Sha2_256f, pk_bytes, msg, sig_bytes),
-        CKP_SLH_DSA_SHAKE_256F => slh_dsa_verify!(slh_dsa::Shake256f, pk_bytes, msg, sig_bytes),
+        CKP_SLH_DSA_SHA2_128S => slh_dsa_verify!(slh_dsa::Sha2_128s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_128S => slh_dsa_verify!(slh_dsa::Shake128s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHA2_128F => slh_dsa_verify!(slh_dsa::Sha2_128f, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_128F => slh_dsa_verify!(slh_dsa::Shake128f, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHA2_192S => slh_dsa_verify!(slh_dsa::Sha2_192s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_192S => slh_dsa_verify!(slh_dsa::Shake192s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHA2_192F => slh_dsa_verify!(slh_dsa::Sha2_192f, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_192F => slh_dsa_verify!(slh_dsa::Shake192f, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHA2_256S => slh_dsa_verify!(slh_dsa::Sha2_256s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_256S => slh_dsa_verify!(slh_dsa::Shake256s, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHA2_256F => slh_dsa_verify!(slh_dsa::Sha2_256f, pk_bytes, msg, sig_bytes, ctx),
+        CKP_SLH_DSA_SHAKE_256F => slh_dsa_verify!(slh_dsa::Shake256f, pk_bytes, msg, sig_bytes, ctx),
         _ => Err(CKR_KEY_TYPE_INCONSISTENT),
     }
 }

@@ -43,6 +43,10 @@ import {
   verify,
   slhdsaSign,
   slhdsaVerify,
+  importSLHDSAPublicKey,
+  importSLHDSAPrivateKey,
+  slhdsaSignBytesCtx,
+  slhdsaVerifyBytesCtx,
   eddsaSign,
   eddsaVerify,
   digest,
@@ -78,6 +82,7 @@ const hmac384Vec = loadJson('hmac_sha384_test.json')
 const hmac512Vec = loadJson('hmac_sha512_test.json')
 const ecdsaP384Vec = loadJson('ecdsa_p384_test.json')
 const aesKwVec = loadJson('aeskw_test.json')
+const slhdsaCtxVec = loadJson('slhdsa_ctx_test.json')
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function arrEq(a, b) {
@@ -446,6 +451,53 @@ async function runSuite(engineName) {
         addResult('aeskwp', 'AES-KWP-256', 'Wrap+Unwrap Round-Trip', 'FAIL', e.message)
       }
     }
+    // ── 21. SLH-DSA context binding Sign+Verify (FIPS 205 §9.2) ────────
+    // Generate fresh key pair; sign with context_A; verify same/diff ctx.
+    // NIST reference tcId / vector preserved in slhdsa_ctx_test.json for audit.
+    {
+      const ctxA = new Uint8Array([0xAB, 0xCD, 0xEF, 0x01, 0x23])  // 5-byte context
+      const ctxB = new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF, 0xFF])  // different context
+      const msg  = new TextEncoder().encode('FIPS 205 §9.2 context binding test')
+      try {
+        const { pubHandle, privHandle } = generateSLHDSAKeyPair(M, hSession, CK.CKP_SLH_DSA_SHA2_128S)
+        const sig = slhdsaSignBytesCtx(M, hSession, privHandle, msg, ctxA, false)
+        const okSameCtx  = slhdsaVerifyBytesCtx(M, hSession, pubHandle, msg, sig, ctxA)
+        const okDiffCtx  = slhdsaVerifyBytesCtx(M, hSession, pubHandle, msg, sig, ctxB)
+        const okEmptyCtx = slhdsaVerifyBytesCtx(M, hSession, pubHandle, msg, sig, new Uint8Array(0))
+        const ok = okSameCtx && !okDiffCtx && !okEmptyCtx
+        addResult('slhdsa-ctx-bind', 'SLH-DSA-SHA2-128s',
+          'Context-binding Sign+Verify (FIPS 205 §9.2)',
+          ok ? 'PASS' : 'FAIL',
+          `sameCtx=${okSameCtx} diffCtx=${okDiffCtx} emptyCtx=${okEmptyCtx} sig[${sig.length}B]`)
+      } catch (e) {
+        addResult('slhdsa-ctx-bind', 'SLH-DSA-SHA2-128s',
+          'Context-binding Sign+Verify (FIPS 205 §9.2)', 'FAIL', e.message)
+      }
+    }
+
+    // ── 22. SLH-DSA deterministic signing (FIPS 205 §10) ────────────────
+    // Generate fresh key pair; sign same message twice with deterministic=true;
+    // both signatures must be byte-for-byte identical (FIPS 205 §10 guarantee).
+    {
+      const ctx = new Uint8Array([0x50, 0x51, 0x43]) // "PQC" in hex
+      const msg = new TextEncoder().encode('FIPS 205 §10 deterministic signing test')
+      try {
+        const { pubHandle, privHandle } = generateSLHDSAKeyPair(M, hSession, CK.CKP_SLH_DSA_SHA2_128S)
+        const sig1 = slhdsaSignBytesCtx(M, hSession, privHandle, msg, ctx, true)
+        const sig2 = slhdsaSignBytesCtx(M, hSession, privHandle, msg, ctx, true)
+        const det = arrEq(sig1, sig2)
+        const verified = slhdsaVerifyBytesCtx(M, hSession, pubHandle, msg, sig1, ctx)
+        const ok = det && verified
+        addResult('slhdsa-det', 'SLH-DSA-SHA2-128s',
+          'Deterministic Sign+Verify (FIPS 205 §10)',
+          ok ? 'PASS' : 'FAIL',
+          `det=${det} verified=${verified} sig[${sig1.length}B]`)
+      } catch (e) {
+        addResult('slhdsa-det', 'SLH-DSA-SHA2-128s',
+          'Deterministic Sign+Verify (FIPS 205 §10)', 'FAIL', e.message)
+      }
+    }
+
   } finally {
     finalizeEngine(M, hSession)
   }

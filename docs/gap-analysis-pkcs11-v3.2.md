@@ -1,9 +1,9 @@
-# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v8)
+# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v9)
 
-**Updated:** 2026-03-13 (v8 — CKM_KMAC_128/256 vendor extension, C_GetMechanismInfo full coverage)
-**Baseline:** Post-Phase-7 + G-DA1/DA2 + G-5G1/5G2/5G3 + G-PUB1 + G-PK1 + G-PK2 + G-PK4 + G-KMAC1/KMAC2 — all tracked gaps resolved
+**Updated:** 2026-04-01 (v9 — SLH-DSA context string G4 + deterministic mode G5 resolved, full C++/Rust/TypeScript parity)
+**Baseline:** Post-Phase-8 + G4 (SLH-DSA context string, FIPS 205 §9.2) + G5 (SLH-DSA deterministic mode, FIPS 205 §10) — all tracked gaps resolved
 **Spec reference:** OASIS PKCS#11 v3.2 CSD01 (<http://docs.oasis-open.org/pkcs11/pkcs11-base/v3.2/>)
-**Prior baseline (v7):** SP 800-108 Feedback KDF (G-PK2), ECDH Cofactor Derive (G-PK4), C_DeriveKey validation switch bugfix (2026-03-04).
+**Prior baseline (v8):** CKM_KMAC_128/256 vendor extension (G-KMAC1/KMAC2), C_GetMechanismInfo full coverage (2026-03-13).
 
 ---
 
@@ -37,6 +37,22 @@ OpenSSL `EVP_MAC_fetch("KMAC-128/256")`) and Rust (`kmac` crate). Both engines e
 `C_GetMechanismList`. Previously, AES-CTR, all pre-hash ML-DSA/SLH-DSA variants, ECDSA-SHA3
 variants, ECDH1-cofactor, and all KDF mechanisms fell through to `CKR_MECHANISM_INVALID` —
 a contradiction visible in the playground log during mechanism discovery.
+**NEW (v9):** SLH-DSA context string (G4, FIPS 205 §9.2) and deterministic signing (G5,
+FIPS 205 §10) implemented across the full stack:
+- C++: `SLHDSA_SIGN_PARAMS.deterministic` added; `CKM_SLH_DSA` sign/verify init now accepts
+  optional `CK_SIGN_ADDITIONAL_CONTEXT`; `OSSLSLHDSA::sign/verify` apply
+  `OSSL_SIGNATURE_PARAM_CONTEXT_STRING` and `OSSL_SIGNATURE_PARAM_DETERMINISTIC` via
+  `EVP_PKEY_CTX_set_params`.
+- Rust: `SIGN_STATE`/`VERIFY_STATE` expanded to `(mech, key, ctx: Vec<u8>, deterministic: bool)`;
+  `parse_slh_dsa_ctx` helper parses `CK_SIGN_ADDITIONAL_CONTEXT` (WASM32 layout) in all init
+  paths; `slh_dsa_sign!`/`slh_dsa_verify!` macros and `sign_slh_dsa`/`verify_slh_dsa` functions
+  accept `ctx` + `deterministic`; 3 new unit tests validate context, deterministic, and
+  cross-context failure.
+- TypeScript: `SLHDSASignOptions.context` and `.deterministic` added; `buildSlhDsaSignContext`
+  helper allocates `CK_SIGN_ADDITIONAL_CONTEXT` in WASM heap; `hsm_slhdsaSign` and
+  `hsm_slhdsaVerify` pass context params for pure `CKM_SLH_DSA`.
+- Playground UI: SLH-DSA panel gains Context text input and Deterministic checkbox (hidden in
+  pre-hash mode).
 
 | Dimension | Remaining open | Notes |
 | --- | --- | --- |
@@ -528,3 +544,59 @@ Note: KMAC is not yet assigned a standard CKM value in PKCS#11 v3.2 CSD01; vendo
 
 - `rust/src/ffi.rs` — added match arms for each affected mechanism group with appropriate `(minKey, maxKey, flags)` tuples.
 - `src/lib/SoftHSM_slots.cpp` — folded ECDSA-SHA3 variants into the existing `CKM_ECDSA` / `CKM_ECDSA_SHA*` block; folded `CKM_ECDH1_COFACTOR_DERIVE` into the existing `CKM_ECDH1_DERIVE` block.
+
+---
+
+## §1.19 G-SLHDSA1 — SLH-DSA Context String (FIPS 205 §9.2) ✓ RESOLVED (v9)
+
+**Gap:** `CKM_SLH_DSA` (pure mode) rejected any mechanism parameter with `CKR_MECHANISM_PARAM_INVALID`. FIPS 205 §9.2 allows an optional 0–255 byte context string that must be bound to the signature; omitting it is equivalent to a zero-length context. The Rust engine hardcoded `&[]` (no context) in all sign/verify paths.
+
+**PKCS#11 v3.2 interface:** `CK_SIGN_ADDITIONAL_CONTEXT` struct (12 bytes WASM32): `hedgeVariant(4) + pContext(4) + ulContextLen(4)`. Passed as `pParameter` in `CK_MECHANISM` for `CKM_SLH_DSA`.
+
+| Component | File | Change |
+| --- | --- | --- |
+| `SLHDSA_SIGN_PARAMS` | `src/lib/crypto/AsymmetricAlgorithm.h:175` | Added `bool deterministic` field |
+| `CKM_SLH_DSA` sign init | `src/lib/SoftHSM_sign.cpp:897` | Replaced rejection with optional `parseSLHDSASignContext` call |
+| `CKM_SLH_DSA` verify init | `src/lib/SoftHSM_sign.cpp:2050` | Same fix |
+| `OSSLSLHDSA::sign()` | `src/lib/crypto/OSSLSLHDSA.cpp:321` | `EVP_DigestSignInit(ctx, &pkeyCtx, …)` + `EVP_PKEY_CTX_set_params` for context |
+| `OSSLSLHDSA::verify()` | `src/lib/crypto/OSSLSLHDSA.cpp:407` | Same for verify (context only) |
+| Rust `SIGN_STATE` | `rust/src/state.rs:12` | Tuple expanded to `(u32, u32, Vec<u8>, bool)` |
+| Rust `parse_slh_dsa_ctx` | `rust/src/ffi.rs` | New helper: parses `CK_SIGN_ADDITIONAL_CONTEXT` from WASM32 pointer |
+| Rust `_C_SignInit` | `rust/src/ffi.rs:1264` | Calls `parse_slh_dsa_ctx` for `CKM_SLH_DSA`, stores 4-tuple |
+| Rust `_C_VerifyInit` | `rust/src/ffi.rs:1387` | Mirror of SignInit |
+| `slh_dsa_sign!` macro | `rust/src/crypto/handlers.rs:150` | Added `ctx` + `deterministic` params |
+| `slh_dsa_verify!` macro | `rust/src/crypto/handlers.rs:162` | Added `ctx` param |
+| `sign_slh_dsa` | `rust/src/crypto/handlers.rs:436` | Signature extended with `ctx: &[u8], deterministic: bool` |
+| `verify_slh_dsa` | `rust/src/crypto/handlers.rs:692` | Signature extended with `ctx: &[u8]` |
+| TypeScript `SLHDSASignOptions` | `src/wasm/softhsm.ts:1298` | Added `context?: Uint8Array` |
+| `buildSlhDsaSignContext` | `src/wasm/softhsm.ts:1357` | New helper allocates `CK_SIGN_ADDITIONAL_CONTEXT` |
+| `hsm_slhdsaSign` | `src/wasm/softhsm.ts` | Passes context params when `!preHash && context` |
+| `hsm_slhdsaVerify` | `src/wasm/softhsm.ts` | Passes context params when `!preHash && context` |
+| Playground UI | `SignVerifyTab.tsx:HsmSlhDsaSignPanel` | Context text input (hidden in pre-hash mode) |
+
+---
+
+## §1.20 G-SLHDSA2 — SLH-DSA Deterministic Signing (FIPS 205 §10) ✓ RESOLVED (v9)
+
+**Gap:** FIPS 205 §10 defines a deterministic signing mode where `opt_rand = PK.seed` instead of a random value. `SLHDSA_SIGN_PARAMS` had no `deterministic` field; `parseSLHDSASignContext` ignored `hedgeVariant`; `OSSLSLHDSA::sign()` passed `NULL` for `pkeyCtx` (no way to set params); Rust hardcoded `None` entropy.
+
+**PKCS#11 v3.2 interface:** `CKH_DETERMINISTIC_REQUIRED = 0x00000002` in `hedgeVariant` field of `CK_SIGN_ADDITIONAL_CONTEXT`. Verification is unaffected (no determinism parameter for verify).
+
+| Component | File | Change |
+| --- | --- | --- |
+| `SLHDSA_SIGN_PARAMS` | `AsymmetricAlgorithm.h:175` | `bool deterministic` field (shared with G-SLHDSA1 fix) |
+| `parseSLHDSASignContext` | `SoftHSM_sign.cpp:~379` | `out.deterministic = (ctx->hedgeVariant == CKH_DETERMINISTIC_REQUIRED)` |
+| `OSSLSLHDSA::sign()` | `OSSLSLHDSA.cpp:321` | `OSSL_SIGNATURE_PARAM_DETERMINISTIC` set via `EVP_PKEY_CTX_set_params` |
+| `CKH_DETERMINISTIC_REQUIRED` | `rust/src/constants.rs:99` | `pub const CKH_DETERMINISTIC_REQUIRED: u32 = 0x0000_0002` |
+| Rust `_C_SignInit` | `rust/src/ffi.rs:1264` | Stores `deterministic` bool extracted from `hedgeVariant` |
+| `slh_dsa_sign!` macro | `rust/src/crypto/handlers.rs:150` | `entropy = if deterministic { Some(&sk_bytes[2n..3n]) } else { None }` |
+| TypeScript `SLHDSASignOptions` | `src/wasm/softhsm.ts:1298` | Added `deterministic?: boolean` |
+| `buildSlhDsaSignContext` | `src/wasm/softhsm.ts:1357` | Sets `CKH_DETERMINISTIC_REQUIRED` when `deterministic=true` |
+| Playground UI | `SignVerifyTab.tsx:HsmSlhDsaSignPanel` | Deterministic checkbox (hidden in pre-hash mode) |
+
+**Rust deterministic mechanism (FIPS 205 §10):** SK layout = `SK.seed(n) ‖ SK.prf(n) ‖ PK.seed(n) ‖ PK.root(n)` where `n = sk.len()/4`. Deterministic mode passes `Some(&sk_bytes[2n..3n])` as `opt_rand` to `try_sign_with_context`, which uses PK.seed instead of random bytes.
+
+**Unit tests added** (`rust/tests/pqc_api_test.rs`):
+- `test_slh_dsa_sign_verify_with_context` — sign+verify with context, wrong context fails
+- `test_slh_dsa_deterministic_produces_same_signature` — same message twice → identical sigs
+- `test_slh_dsa_context_cross_verify_fails_on_mismatch` — sign with "sign-ctx", verify with "verify-ctx" → `CKR_SIGNATURE_INVALID`
