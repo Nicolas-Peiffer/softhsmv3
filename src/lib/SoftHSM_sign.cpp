@@ -2682,6 +2682,20 @@ CK_RV SoftHSM::C_SignMessage(CK_SESSION_HANDLE hSession,
 	// Per-message parameter override (PKCS#11 v3.2 §5.8.5) — ML-DSA and SLH-DSA context / hedging
 	{ CK_RV rv2 = applyPerMessageParam(session, pParameter, ulParameterLen); if (rv2 != CKR_OK) return rv2; }
 
+	// Snapshot mechanism params — AsymSign calls resetOp() which frees them.
+	// C_SignMessage is invoked twice per message in the two-pass (size-query then
+	// real-sign) pattern; params (context string, deterministic flag) must survive
+	// both calls so each message is signed with the same context as the init call.
+	size_t snapLen = 0;
+	void* snapBase = session->getParameters(snapLen);
+	void* snap = NULL;
+	if (snapBase && snapLen > 0)
+	{
+		snap = malloc(snapLen);
+		if (!snap) return CKR_HOST_MEMORY;
+		memcpy(snap, snapBase, snapLen);
+	}
+
 	// AsymSign expects SESSION_OP_SIGN; temporarily satisfy that check.
 	// AsymSign calls resetOp() before returning (both size-query and real sign),
 	// so we must unconditionally restore MESSAGE_SIGN on success to keep the
@@ -2689,8 +2703,11 @@ CK_RV SoftHSM::C_SignMessage(CK_SESSION_HANDLE hSession,
 	session->setOpType(SESSION_OP_SIGN);
 	CK_RV rv = AsymSign(session, pData, ulDataLen, pSignature, pulSignatureLen);
 	if (rv == CKR_OK)
+	{
 		session->setOpType(SESSION_OP_MESSAGE_SIGN);
-
+		if (snap) session->setParameters(snap, snapLen);
+	}
+	if (snap) free(snap);
 	return rv;
 }
 
@@ -2741,13 +2758,29 @@ CK_RV SoftHSM::C_VerifyMessage(CK_SESSION_HANDLE hSession,
 	// Per-message parameter override (PKCS#11 v3.2 §5.8.8) — ML-DSA and SLH-DSA context / hedging
 	{ CK_RV rv2 = applyPerMessageParam(session, pParameter, ulParameterLen); if (rv2 != CKR_OK) return rv2; }
 
+	// Snapshot mechanism params — AsymVerify calls resetOp() which frees them.
+	// Restore after each call so subsequent messages verify with the same context.
+	size_t snapLen = 0;
+	void* snapBase = session->getParameters(snapLen);
+	void* snap = NULL;
+	if (snapBase && snapLen > 0)
+	{
+		snap = malloc(snapLen);
+		if (!snap) return CKR_HOST_MEMORY;
+		memcpy(snap, snapBase, snapLen);
+	}
+
 	// AsymVerify expects SESSION_OP_VERIFY; temporarily satisfy that check.
 	// AsymVerify calls resetOp() before returning, so restore MESSAGE_VERIFY on
 	// success to maintain the multi-message contract.
 	session->setOpType(SESSION_OP_VERIFY);
 	CK_RV rv = AsymVerify(session, pData, ulDataLen, pSignature, ulSignatureLen);
 	if (rv == CKR_OK)
+	{
 		session->setOpType(SESSION_OP_MESSAGE_VERIFY);
+		if (snap) session->setParameters(snap, snapLen);
+	}
+	if (snap) free(snap);
 	return rv;
 }
 
