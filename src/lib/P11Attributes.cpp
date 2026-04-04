@@ -2581,3 +2581,27 @@ CK_RV P11AttrDecapsulate::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VO
 
 	return CKR_OK;
 }
+
+/*****************************************
+ * CKA_HSS_KEYS_REMAINING  (PKCS#11 v3.2)
+ *****************************************/
+
+// Set default value (0 = uninitialized)
+bool P11AttrHssKeysRemaining::setDefault()
+{
+	OSAttribute attr((unsigned long)0);
+	return osobject->setAttribute(type, attr);
+}
+
+// Update the value if allowed — writable during generate and set
+CK_RV P11AttrHssKeysRemaining::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	if (ulValueLen != sizeof(CK_ULONG))
+	{
+		return CKR_ATTRIBUTE_VALUE_INVALID;
+	}
+
+	OSAttribute attr(*(CK_ULONG*)pValue);
+	osobject->setAttribute(type, attr);
+	return CKR_OK;
+}

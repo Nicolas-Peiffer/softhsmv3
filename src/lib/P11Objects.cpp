@@ -2038,3 +2038,79 @@ bool P11MLKEMPrivateKeyObj::init(OSObject *inobject)
 	initialized = true;
 	return true;
 }
+
+// ─── HSS/LMS Public Key (PKCS#11 v3.2) ────────────────────────────────────────
+
+// Constructor
+P11HSSPublicKeyObj::P11HSSPublicKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11HSSPublicKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	// Create parent
+	if (!P11PublicKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrValue        = new P11AttrValue(osobject, 0);
+	P11Attribute* attrHssRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	// Initialize the attributes
+	if (!attrValue->init() || !attrHssRemaining->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrValue;
+		delete attrHssRemaining;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrValue->getType()]        = attrValue;
+	attributes[attrHssRemaining->getType()] = attrHssRemaining;
+
+	initialized = true;
+	return true;
+}
+
+// ─── HSS/LMS Private Key (PKCS#11 v3.2) ───────────────────────────────────────
+
+// Constructor
+P11HSSPrivateKeyObj::P11HSSPrivateKeyObj()
+{
+	initialized = false;
+}
+
+// Add attributes
+bool P11HSSPrivateKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+
+	// Create parent
+	if (!P11PrivateKeyObj::init(inobject)) return false;
+
+	// Create attributes
+	P11Attribute* attrValue        = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	P11Attribute* attrHssRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	// Initialize the attributes
+	if (!attrValue->init() || !attrHssRemaining->init())
+	{
+		ERROR_MSG("Could not initialize the attribute");
+		delete attrValue;
+		delete attrHssRemaining;
+		return false;
+	}
+
+	// Add them to the map
+	attributes[attrValue->getType()]        = attrValue;
+	attributes[attrHssRemaining->getType()] = attrHssRemaining;
+
+	initialized = true;
+	return true;
+}

@@ -466,4 +466,32 @@ protected:
 	bool initialized;
 };
 
+// ─── HSS/LMS (PKCS#11 v3.2, CKK_HSS = 0x62, CKK_LMS = 0x80000001) ──────────
+
+class P11HSSPublicKeyObj : public P11PublicKeyObj
+{
+public:
+	// Constructor
+	P11HSSPublicKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
+class P11HSSPrivateKeyObj : public P11PrivateKeyObj
+{
+public:
+	// Constructor
+	P11HSSPrivateKeyObj();
+
+	// Add attributes
+	virtual bool init(OSObject *inobject);
+
+protected:
+	bool initialized;
+};
+
 #endif // !_SOFTHSM_V2_P11OBJECTS_H

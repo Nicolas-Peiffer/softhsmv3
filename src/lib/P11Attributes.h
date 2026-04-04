@@ -1276,4 +1276,23 @@ protected:
 	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
 };
 
+/*****************************************
+ * CKA_HSS_KEYS_REMAINING  (PKCS#11 v3.2)
+ * Read-only counter tracking remaining stateful HSS/LMS signature operations
+ *****************************************/
+
+class P11AttrHssKeysRemaining : public P11Attribute
+{
+public:
+	// Constructor
+	P11AttrHssKeysRemaining(OSObject* inobject) : P11Attribute(inobject) { type = 0x0000061cUL; size = sizeof(CK_ULONG); checks = 0; }
+
+protected:
+	// Set the default value of the attribute
+	virtual bool setDefault();
+
+	// Update the value if allowed
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
 #endif // !_SOFTHSM_V2_P11ATTRIBUTES_H

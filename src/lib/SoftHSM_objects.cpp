@@ -84,6 +84,8 @@ static CK_RV newP11Object(CK_OBJECT_CLASS objClass, CK_KEY_TYPE keyType, CK_CERT
 				*p11object = new P11MLKEMPublicKeyObj();
 			else if (keyType == CKK_SLH_DSA)
 				*p11object = new P11SLHDSAPublicKeyObj();
+			else if (keyType == 0x00000062UL || keyType == 0x80000001UL) // CKK_HSS / CKK_LMS
+				*p11object = new P11HSSPublicKeyObj();
 			else
 				return CKR_ATTRIBUTE_VALUE_INVALID;
 			break;
@@ -101,6 +103,8 @@ static CK_RV newP11Object(CK_OBJECT_CLASS objClass, CK_KEY_TYPE keyType, CK_CERT
 				*p11object = new P11MLKEMPrivateKeyObj();
 			else if (keyType == CKK_SLH_DSA)
 				*p11object = new P11SLHDSAPrivateKeyObj();
+			else if (keyType == 0x00000062UL || keyType == 0x80000001UL) // CKK_HSS / CKK_LMS
+				*p11object = new P11HSSPrivateKeyObj();
 			else
 				return CKR_ATTRIBUTE_VALUE_INVALID;
 			break;
