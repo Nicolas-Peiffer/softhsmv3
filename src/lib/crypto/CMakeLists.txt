@@ -106,7 +106,7 @@ set(SOURCES
     stateful/hash-sigs/hss_reserve.c
     stateful/hash-sigs/hss_sign.c
     stateful/hash-sigs/hss_sign_inc.c
-    stateful/hash-sigs/hss_thread_pthread.c
+    $<IF:$<BOOL:${EMSCRIPTEN}>,stateful/hash-sigs/hss_thread_single.c,stateful/hash-sigs/hss_thread_pthread.c>
     stateful/hash-sigs/hss_verify.c
     stateful/hash-sigs/hss_verify_inc.c
     stateful/hash-sigs/hss_zeroize.c
