@@ -141,6 +141,12 @@ public:
 	const ByteString& getMsgBuffer() const;
 	void clearMsgBuffer();
 
+	void setSignKeyHandle(CK_OBJECT_HANDLE hKey);
+	CK_OBJECT_HANDLE getSignKeyHandle();
+
+	void setVerifyKeyHandle(CK_OBJECT_HANDLE hKey);
+	CK_OBJECT_HANDLE getVerifyKeyHandle();
+
 private:
 	// Constructor
 	Session();
@@ -187,6 +193,9 @@ private:
 
 	// Symmetric Crypto
 	SymmetricKey* symmetricKey;
+
+	CK_OBJECT_HANDLE signKeyHandle;
+	CK_OBJECT_HANDLE verifyKeyHandle;
 
 	// Pre-bound verify message accumulation (C_VerifySignatureUpdate / Final)
 	ByteString msgBuffer;

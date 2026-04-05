@@ -58,6 +58,8 @@ Session::Session(Slot* inSlot, bool inIsReadWrite, CK_VOID_PTR inPApplication, C
 	symmetricKey = NULL;
 	param = NULL;
 	paramLen = 0;
+	signKeyHandle = CK_INVALID_HANDLE;
+	verifyKeyHandle = CK_INVALID_HANDLE;
 }
 
 // Constructor
@@ -85,6 +87,8 @@ Session::Session()
 	symmetricKey = NULL;
 	param = NULL;
 	paramLen = 0;
+	signKeyHandle = CK_INVALID_HANDLE;
+	verifyKeyHandle = CK_INVALID_HANDLE;
 }
 
 // Destructor
@@ -477,4 +481,24 @@ const ByteString& Session::getMsgBuffer() const
 void Session::clearMsgBuffer()
 {
 	msgBuffer.wipe();
+}
+
+void Session::setSignKeyHandle(CK_OBJECT_HANDLE hKey)
+{
+	signKeyHandle = hKey;
+}
+
+CK_OBJECT_HANDLE Session::getSignKeyHandle()
+{
+	return signKeyHandle;
+}
+
+void Session::setVerifyKeyHandle(CK_OBJECT_HANDLE hKey)
+{
+	verifyKeyHandle = hKey;
+}
+
+CK_OBJECT_HANDLE Session::getVerifyKeyHandle()
+{
+	return verifyKeyHandle;
 }

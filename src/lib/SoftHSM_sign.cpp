@@ -28,9 +28,10 @@
 /*****************************************************************************
  SoftHSM_sign.cpp
 
- PKCS#11 sign/verify/MAC operations: MacSignInit, AsymSignInit, C_SignInit,
- C_Sign, C_SignUpdate, C_SignFinal, C_SignRecoverInit, C_SignRecover,
- MacVerifyInit, AsymVerifyInit, C_VerifyInit, C_Verify, C_VerifyUpdate,
+ PKCS#11 sign/verify/MAC operations: MacSignInit, AsymSignInit,
+ StatefulSignInit, C_SignInit, C_Sign, C_SignUpdate, C_SignFinal,
+ C_SignRecoverInit, C_SignRecover, MacVerifyInit, AsymVerifyInit,
+ StatefulVerifyInit, StatefulVerify, C_VerifyInit, C_Verify, C_VerifyUpdate,
  C_VerifyFinal, multi-message stubs, C_VerifyRecoverInit, C_VerifyRecover,
  combined-operation stubs.  Static helpers: isMacMechanism, kMacMechTable,
  resolveMacMech, parseMLDSASignContext, parseSLHDSASignContext.
@@ -61,6 +62,12 @@
 #include "SLHDSAPrivateKey.h"
 #include "OSSLSLHDSAPublicKey.h"
 #include "OSSLSLHDSAPrivateKey.h"
+extern "C" {
+#include "stateful/hash-sigs/hss.h"
+#include "stateful/xmss-reference/xmss_core.h"
+#include "stateful/xmss-reference/xmss.h"
+}
+#include "vendor_mechanisms.h"
 
 // Sign*/Verify*() is for MACs too
 static bool isMacMechanism(CK_MECHANISM_PTR pMechanism)
@@ -1125,11 +1132,51 @@ CK_RV SoftHSM::AsymSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 	return CKR_OK;
 }
 
+// Stateful version of C_SignInit
+CK_RV SoftHSM::StatefulSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pMechanism == NULL_PTR) return CKR_ARGUMENTS_BAD;
+
+	std::shared_ptr<Session> sessionGuard;
+	Session* session; Token* token; OSObject* key;
+	CK_RV rv = acquireSessionTokenKey(hSession, hKey, CKA_SIGN, pMechanism,
+	                                   sessionGuard, session, token, key);
+	if (rv != CKR_OK) return rv;
+
+	session->setOpType(SESSION_OP_SIGN);
+	
+	// Stateful signatures do NOT use AsymmetricAlgorithm base.
+	// Instead, we just track the exact mechanism and the raw hKey in the session.
+	AsymMech::Type mechanism = AsymMech::Unknown;
+	if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002) {
+		mechanism = (AsymMech::Type)1000; // Custom flag for HSS
+	} else if (pMechanism->mechanism == CKM_XMSS) {
+		mechanism = (AsymMech::Type)1001; // Custom flag for XMSS
+	} else if (pMechanism->mechanism == 0x00004036 /* CKM_XMSS_MT */) {
+		mechanism = (AsymMech::Type)1002;
+	} else {
+		return CKR_MECHANISM_INVALID;
+	}
+
+	session->setMechanism(mechanism);
+	session->setAllowMultiPartOp(false); // Stateful signatures are 100% single-part (C_Sign only)
+	session->setAllowSinglePartOp(true);
+	session->setSignKeyHandle(hKey);
+
+	return CKR_OK;
+}
+
 // Initialise a signing operation using the specified key and mechanism
 CK_RV SoftHSM::C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+	if (pMechanism == NULL_PTR) return CKR_ARGUMENTS_BAD;
+	
 	if (isMacMechanism(pMechanism))
 		return MacSignInit(hSession, pMechanism, hKey);
+	else if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002 ||
+	         pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036)
+		return StatefulSignInit(hSession, pMechanism, hKey);
 	else
 		return AsymSignInit(hSession, pMechanism, hKey);
 }
@@ -1273,6 +1320,115 @@ static CK_RV AsymSign(Session* session, CK_BYTE_PTR pData, CK_ULONG ulDataLen, C
 	return CKR_OK;
 }
 
+CK_RV SoftHSM::StatefulSign(Session* session, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+{
+	if (!session->getAllowSinglePartOp()) {
+		session->resetOp();
+		return CKR_OPERATION_NOT_INITIALIZED;
+	}
+
+	CK_OBJECT_HANDLE hKey = session->getSignKeyHandle();
+	OSObject* osObj = (OSObject*)handleManager->getObject(hKey);
+	if (!osObj) {
+		session->resetOp();
+		return CKR_KEY_HANDLE_INVALID;
+	}
+
+	AsymMech::Type mechanism = session->getMechanism();
+	ByteString privKeyBytes = osObj->getByteStringValue(CKA_VALUE);
+
+	unsigned char sig[8000] = {0}; // max XMSSMT sig ~ 5000 bytes
+	unsigned long long sig_len = 0;
+
+	if (mechanism == (AsymMech::Type)1000) { // HSS
+		struct hss_working_key* working_key = hss_load_private_key(
+			NULL, 
+			(void*)privKeyBytes.byte_str(), 
+			0, // minimal memory target
+			NULL, 0, NULL
+		);
+		if (!working_key) {
+			session->resetOp();
+			return CKR_FUNCTION_FAILED;
+		}
+
+		size_t exact_sig_len = hss_get_signature_len_from_working_key(working_key);
+
+		bool ok = hss_generate_signature(
+			working_key,
+			NULL, // update_private_key callback
+			(void*)privKeyBytes.byte_str(), // context (memory to mutate)
+			pData, ulDataLen,
+			sig, sizeof(sig), NULL
+		);
+		sig_len = exact_sig_len;
+		
+		hss_free_working_key(working_key);
+
+		if (!ok) {
+			session->resetOp();
+			return CKR_KEY_EXHAUSTED;
+		}
+	} else if (mechanism == (AsymMech::Type)1001) { // XMSS
+		// xmss_sign() returns sm = [signature || message], smlen = sig_bytes + msg_len
+		// Per PKCS#11 v3.2, C_Sign must return only the signature portion
+		int ret = xmss_sign(privKeyBytes.byte_str(), sig, &sig_len, pData, ulDataLen);
+		if (ret != 0) {
+			session->resetOp();
+			return CKR_KEY_EXHAUSTED;
+		}
+		// Strip appended message: sig_len currently = sig_bytes + ulDataLen
+		sig_len -= ulDataLen;
+	} else if (mechanism == (AsymMech::Type)1002) { // XMSSMT
+		int ret = xmssmt_sign(privKeyBytes.byte_str(), sig, &sig_len, pData, ulDataLen);
+		if (ret != 0) {
+			session->resetOp();
+			return CKR_KEY_EXHAUSTED;
+		}
+		// Strip appended message: same as XMSS
+		sig_len -= ulDataLen;
+	} else {
+		session->resetOp();
+		return CKR_MECHANISM_INVALID;
+	}
+
+	if (pSignature == NULL_PTR) {
+		*pulSignatureLen = sig_len;
+		return CKR_OK;
+	}
+
+	if (*pulSignatureLen < sig_len) {
+		*pulSignatureLen = sig_len;
+		return CKR_BUFFER_TOO_SMALL;
+	}
+
+	memcpy(pSignature, sig, sig_len);
+	*pulSignatureLen = sig_len;
+
+	// Commit updated private key state (CKA_VALUE mutating leaf idx) back to database atomically
+	if (osObj->startTransaction()) {
+		osObj->setAttribute(CKA_VALUE, privKeyBytes);
+		
+		// Decrement the keys remaining counter
+		const CK_ATTRIBUTE_TYPE ATTR_CKA_HSS_KEYS_REMAINING = 0x0000061cUL;
+		if (osObj->attributeExists(ATTR_CKA_HSS_KEYS_REMAINING)) {
+			CK_ULONG remainingSigs = osObj->getUnsignedLongValue(ATTR_CKA_HSS_KEYS_REMAINING, 0);
+			if (remainingSigs > 0) {
+				remainingSigs--;
+				osObj->setAttribute(ATTR_CKA_HSS_KEYS_REMAINING, remainingSigs);
+			}
+		}
+		
+		osObj->commitTransaction();
+	} else {
+		session->resetOp();
+		return CKR_DEVICE_ERROR;
+	}
+
+	session->resetOp();
+	return CKR_OK;
+}
+
 // Sign the data in a single pass operation
 CK_RV SoftHSM::C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
@@ -1289,6 +1445,11 @@ CK_RV SoftHSM::C_Sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ul
 	// Check if we are doing the correct operation
 	if (session->getOpType() != SESSION_OP_SIGN)
 		return CKR_OPERATION_NOT_INITIALIZED;
+
+	AsymMech::Type mechanism = session->getMechanism();
+	if (mechanism == (AsymMech::Type)1000 || mechanism == (AsymMech::Type)1001 || mechanism == (AsymMech::Type)1002) {
+		return StatefulSign(session, pData, ulDataLen, pSignature, pulSignatureLen);
+	}
 
 	if (session->getMacOp() != NULL)
 		return MacSign(session, pData, ulDataLen,
@@ -2276,11 +2437,112 @@ CK_RV SoftHSM::AsymVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 	return CKR_OK;
 }
 
+// Stateful hash-based signature verification init (HSS/LMS/XMSS/XMSSMT)
+// PKCS#11 v3.2 §6.14: CKM_HSS, CKM_XMSS, CKM_XMSSMT — C_VerifyInit + C_Verify
+CK_RV SoftHSM::StatefulVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
+{
+	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
+	if (pMechanism == NULL_PTR) return CKR_ARGUMENTS_BAD;
+
+	std::shared_ptr<Session> sessionGuard;
+	Session* session; Token* token; OSObject* key;
+	CK_RV rv = acquireSessionTokenKey(hSession, hKey, CKA_VERIFY, pMechanism,
+	                                   sessionGuard, session, token, key);
+	if (rv != CKR_OK) return rv;
+
+	session->setOpType(SESSION_OP_VERIFY);
+
+	AsymMech::Type mechanism = AsymMech::Unknown;
+	if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002) {
+		mechanism = (AsymMech::Type)1000;
+	} else if (pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036) {
+		mechanism = (AsymMech::Type)1001;
+	} else if (pMechanism->mechanism == 0x00004037) { // CKM_XMSSMT
+		mechanism = (AsymMech::Type)1002;
+	} else {
+		return CKR_MECHANISM_INVALID;
+	}
+
+	session->setMechanism(mechanism);
+	session->setAllowMultiPartOp(false);
+	session->setAllowSinglePartOp(true);
+	session->setVerifyKeyHandle(hKey);
+
+	return CKR_OK;
+}
+
+// Stateful hash-based signature verification (HSS/LMS/XMSS/XMSSMT)
+// PKCS#11 v3.2 §6.14: verification is stateless — only needs public key + message + signature
+CK_RV SoftHSM::StatefulVerify(Session* session, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
+{
+	if (!session->getAllowSinglePartOp()) {
+		session->resetOp();
+		return CKR_OPERATION_NOT_INITIALIZED;
+	}
+
+	CK_OBJECT_HANDLE hKey = session->getVerifyKeyHandle();
+	OSObject* osObj = (OSObject*)handleManager->getObject(hKey);
+	if (!osObj) {
+		session->resetOp();
+		return CKR_KEY_HANDLE_INVALID;
+	}
+
+	AsymMech::Type mechanism = session->getMechanism();
+	ByteString pubKeyBytes = osObj->getByteStringValue(CKA_VALUE);
+
+	bool verified = false;
+
+	if (mechanism == (AsymMech::Type)1000) { // HSS / LMS
+		verified = hss_validate_signature(
+			pubKeyBytes.const_byte_str(),
+			pData, ulDataLen,
+			pSignature, ulSignatureLen,
+			NULL
+		);
+	} else if (mechanism == (AsymMech::Type)1001) { // XMSS
+		// xmss_sign_open expects sm = [signature || message] format
+		// Reconstruct from separate sig + msg per PKCS#11 C_Verify interface
+		unsigned long long smlen = ulSignatureLen + ulDataLen;
+		std::vector<unsigned char> sm(smlen);
+		memcpy(sm.data(), pSignature, ulSignatureLen);
+		memcpy(sm.data() + ulSignatureLen, pData, ulDataLen);
+
+		std::vector<unsigned char> m(smlen);
+		unsigned long long mlen = 0;
+		int ret = xmss_sign_open(m.data(), &mlen, sm.data(), smlen,
+		                         pubKeyBytes.const_byte_str());
+		verified = (ret == 0);
+	} else if (mechanism == (AsymMech::Type)1002) { // XMSSMT
+		unsigned long long smlen = ulSignatureLen + ulDataLen;
+		std::vector<unsigned char> sm(smlen);
+		memcpy(sm.data(), pSignature, ulSignatureLen);
+		memcpy(sm.data() + ulSignatureLen, pData, ulDataLen);
+
+		std::vector<unsigned char> m(smlen);
+		unsigned long long mlen = 0;
+		int ret = xmssmt_sign_open(m.data(), &mlen, sm.data(), smlen,
+		                           pubKeyBytes.const_byte_str());
+		verified = (ret == 0);
+	} else {
+		session->resetOp();
+		return CKR_MECHANISM_INVALID;
+	}
+
+	session->resetOp();
+	return verified ? CKR_OK : CKR_SIGNATURE_INVALID;
+}
+
 // Initialise a verification operation using the specified key and mechanism
 CK_RV SoftHSM::C_VerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+	if (pMechanism == NULL_PTR) return CKR_ARGUMENTS_BAD;
+
 	if (isMacMechanism(pMechanism))
 		return MacVerifyInit(hSession, pMechanism, hKey);
+	else if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002 ||
+	         pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036 ||
+	         pMechanism->mechanism == 0x00004037)
+		return StatefulVerifyInit(hSession, pMechanism, hKey);
 	else
 		return AsymVerifyInit(hSession, pMechanism, hKey);
 }
@@ -2407,6 +2669,11 @@ CK_RV SoftHSM::C_Verify(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG 
 	// Check if we are doing the correct operation
 	if (session->getOpType() != SESSION_OP_VERIFY)
 		return CKR_OPERATION_NOT_INITIALIZED;
+
+	AsymMech::Type mechanism = session->getMechanism();
+	if (mechanism == (AsymMech::Type)1000 || mechanism == (AsymMech::Type)1001 || mechanism == (AsymMech::Type)1002) {
+		return StatefulVerify(session, pData, ulDataLen, pSignature, ulSignatureLen);
+	}
 
 	if (session->getMacOp() != NULL)
 		return MacVerify(session, pData, ulDataLen,

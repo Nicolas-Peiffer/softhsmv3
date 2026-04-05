@@ -59,7 +59,7 @@ FIPS 205 §10) implemented across the full stack:
 | C_* function stubs (in scope) | 0 | All G1–G6 + G-DA1/G-DA2 + G-5G1/5G2/5G3 + G-PUB1/G-PK1/G-PK2/G-PK4 + G-KMAC1/KMAC2 resolved |
 | CKM_* mechanisms (in scope) | 0 | AES-CTR, HKDF, X9.63 KDF, SP 800-108 Counter+Feedback KDF, ECDH1 Cofactor, KMAC-128/256 added |
 | CKA_* attribute stubs (in scope) | 0 | CKA_PUBLIC_KEY_INFO now populated at keygen for all key types |
-| Out-of-scope stubs | 3 | Async (G7), Recovery/Combined ops (G8) |
+| Out-of-scope stubs | 2 | Async (G7), Recovery/Combined ops (G8) |
 | Out-of-scope mechanisms | 1 | CKM_RIPEMD160 (WASM `no-module` constraint, G9) |
 
 ---
@@ -339,12 +339,27 @@ SoftHSM2 v2.7.0 also omits them. No PQC algorithm requires them.
 `C_GetSessionValidationFlags` (`main.cpp:1802`) returns `CKR_FUNCTION_NOT_SUPPORTED`.
 New in v3.2 §5.22. Not required for PQC operations.
 
-### 3.4 G10 — Stateful hash-based signatures (HSS/XMSS/XMSSMT)
+### 3.4 G10 — Stateful hash-based signatures (HSS/XMSS/XMSSMT) ✓ RESOLVED
 
-`CKK_HSS`, `CKK_XMSS`, `CKK_XMSSMT` and their mechanisms are defined in PKCS#11 v3.2 headers
-but are out of scope because OpenSSL 3.x does not natively support these algorithms.
-Would require liboqs integration or a specialized provider — contradicts the OpenSSL-only
-backend design of softhsmv3. Deferred pending OpenSSL native support.
+Implemented in v0.4.4 (Phase 10) using standalone reference libraries — no OpenSSL provider
+needed since these algorithms operate on raw byte arrays rather than EVP contexts.
+
+**C++ engine** (hash-sigs C library + xmss-reference C library):
+- `CKM_HSS_KEY_PAIR_GEN` / `CKM_HSS` — multi-level HSS (1–8 levels), PKCS#11 v3.2 §6.14
+- `CKM_LMS_KEY_PAIR_GEN` / `CKM_LMS` — single-level LMS (vendor extension 0x80000001/2)
+- `CKM_XMSS_KEY_PAIR_GEN` / `CKM_XMSS` — single-tree XMSS (PKCS#11 v3.2 §6.14)
+- `CKM_XMSSMT_KEY_PAIR_GEN` / `CKM_XMSSMT` — multi-tree XMSS^MT
+- `StatefulSignInit` / `StatefulSign` — stateful sign with atomic state persistence
+- `StatefulVerifyInit` / `StatefulVerify` — stateless verification via `hss_validate_signature()` / `xmss_sign_open()`
+- Key exhaustion: `CKR_KEY_EXHAUSTED` (0x203)
+
+**Rust/WASM engine** (hbs-lms 0.1.1 + xmss 0.1.0-pre.0 crates):
+- LMS single-level and HSS multi-level: full keygen/sign/verify via hbs-lms
+- XMSS: full keygen/sign/verify via xmss crate (6 parameter sets: SHA2/SHAKE × H10/H16/H20)
+- XMSS^MT: not yet implemented in Rust
+
+**Parameter sets**: 5 LMS heights (H5–H25), 4 LMOTS Winternitz (W1–W8), 6 XMSS variants.
+All mechanisms registered in `C_GetMechanismInfo` with `CKF_SIGN | CKF_VERIFY`.
 
 ### 3.5 G11 — Session-state serialization
 

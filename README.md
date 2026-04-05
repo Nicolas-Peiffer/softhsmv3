@@ -267,7 +267,8 @@ CKM_ECDH1_COFACTOR_DERIVE  = 0x00001051
 
 The `softhsmv3` implementations maintain strict compliance with current ACVP test vectors and the PKCS#11 v3.2 specification:
 
-- **ACVP Testing (v0.4.0)**: Both the C++ and Rust engines pass **62/62** ACVP test vectors (31 per engine, zero failures, zero skips) in dual HSM mode. Coverage includes ML-KEM (Decapsulate KAT + Round-Trip), ML-DSA (SigVer KAT + Functional, all 3 variants), SLH-DSA (Functional, 2 param sets), AES-GCM/CBC/CTR/KW/KWP, HMAC-SHA256/384/512, RSA-PSS, ECDSA P-256/P-384, EdDSA Ed25519, SHA-256 (3 vectors), PBKDF2, and HKDF.
+- **ACVP Testing (v0.4.0+)**: Both the C++ and Rust engines pass **62/62** ACVP test vectors (31 per engine, zero failures, zero skips) in dual HSM mode. Coverage includes ML-KEM (Decapsulate KAT + Round-Trip), ML-DSA (SigVer KAT + Functional, all 3 variants), SLH-DSA (Functional, 2 param sets), AES-GCM/CBC/CTR/KW/KWP, HMAC-SHA256/384/512, RSA-PSS, ECDSA P-256/P-384, EdDSA Ed25519, SHA-256 (3 vectors), PBKDF2, and HKDF.
+- **NIST ACVP LMS sigVer (v0.4.7)**: **320/320** official NIST ACVP demo vectors validated against `lm_validate_signature()` — all 80 SP 800-208 parameter combinations (SHA-256 M32/M24 + SHAKE-256 M32/M24 × 5 tree heights × 4 Winternitz params). Source: [usnistgov/ACVP-Server](https://github.com/usnistgov/ACVP-Server/tree/master/gen-val/json-files/LMS-sigVer-1.0).
 - **PKCS#11 v3.2 Semantics**: The standalone C++ algorithmic validator (`pqc_validate`) successfully passes 66/66 deep evaluation tests, including comprehensive cryptographic round-trips and negative tampering evaluations against the compiled `libsofthsmv3.dylib`.
 - **Playground E2E**: End-to-end token integration and ACVP matrix execution are verified via automated Playwright continuous integration (`playground-softhsm-acvp.spec.ts`) in dual HSM mode.
 - **Security Audit (March 2026)**: Full remediation of all HIGH and MEDIUM findings. See [`docs/security_audit_03222026.md`](docs/security_audit_03222026.md).
@@ -462,7 +463,7 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
 
 ## Known Limitations
 
-- **Stateful hash-based signatures** (HSS, XMSS): Not implemented — these require persistent state management outside the scope of a software HSM.
+- **Stateful hash-based signatures**: HSS/LMS (keygen, sign, verify) and XMSS/XMSS^MT (keygen, sign, verify) are implemented in both C++ and Rust engines. All SP 800-208 parameter sets supported (SHA-256 N32/N24, SHAKE-256 N32/N24). Validated against 320 NIST ACVP LMS sigVer demo vectors. State persistence is in-memory per session — the host application must manage durable state for production use.
 - **Single-threaded**: The WASM target is single-threaded (no SharedArrayBuffer worker pool).
 - **Non-persistent token**: Token state is in-memory only and does not survive WASM module reload.
 
@@ -529,6 +530,16 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
   - [x] Rust: `C_WrapKey` extended to accept `CKM_RSA_PKCS_OAEP` for indirect RSA+KEK wrapping
   - [x] Rust: `CKM_AES_KEY_WRAP_KWP` case added to `C_GetMechanismInfo`
   - [x] Rust: 65 total PKCS#11 exports (49 implemented, 8 multi-part stubs, 8 admin stubs)
+- [x] Phase 12: SP 800-208 full parameter coverage + NIST ACVP LMS validation (v0.4.7)
+  - [x] C++: `StatefulVerifyInit` / `StatefulVerify` — HSS/LMS/XMSS/XMSS^MT signature verification via PKCS#11 `C_VerifyInit`/`C_Verify`
+  - [x] C++: XMSS keygen buffer overflow fix (OID prefix accounting)
+  - [x] C++: XMSS `C_Sign` output compliance — return signature only, not `sig||msg`
+  - [x] C++: SHAKE-256 hash type added to hash-sigs library (OpenSSL EVP)
+  - [x] C++: All 20 LMS + 16 LMOTS SP 800-208 parameter sets (SHA-256 N32/N24, SHAKE-256 N32/N24)
+  - [x] C++ + Rust: CKP_ constants corrected to IANA registry type IDs (RFC 8554 + SP 800-208)
+  - [x] C++ + Rust: XMSS/XMSS^MT registered in `C_GetMechanismInfo` with `CKF_SIGN | CKF_VERIFY`
+  - [x] Rust: `Sha256_192`, `Shake256_256`, `Shake256_192` hash type dispatch in LMS keygen
+  - [x] NIST ACVP LMS sigVer: 320/320 demo vectors validated (all 80 parameter combinations)
 
 ## Building (Native)
 

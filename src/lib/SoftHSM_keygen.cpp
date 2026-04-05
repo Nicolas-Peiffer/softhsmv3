@@ -87,9 +87,14 @@
 extern "C" {
 #include "stateful/hash-sigs/hss.h"
 #include "stateful/xmss-reference/xmss_core.h"
+#include "stateful/xmss-reference/xmss.h"
+#include "stateful/xmss-reference/params.h"
+#include "stateful/xmss-reference/randombytes.h"
 }
 #include <openssl/params.h>
+#include <vector>
 #include "cryptoki.h"
+#include "vendor_mechanisms.h"
 #include "P11Attributes.h"
 #include "P11Objects.h"
 #include "HDWalletDerivation.h"
@@ -421,44 +426,168 @@ CK_RV SoftHSM::C_GenerateKeyPair
 	// The C wrapper factories (StatefulKeyPair) wrap the native hash-sigs and
 	// xmss-reference C libraries for cross-validation generation logic.
 	if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || 
-	    pMechanism->mechanism == 0x80000001 /* CKM_LMS_KEY_PAIR_GEN */)
+	    pMechanism->mechanism == 0x80000001 /* CKM_LMS_KEY_PAIR_GEN */ ||
+		pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN ||
+		pMechanism->mechanism == 0x00004035 /* CKM_XMSSMT_KEY_PAIR_GEN */)
 	{
 		CK_RV rv = CKR_OK;
 		
-		// Mock keys for Workshop Demonstration.
-		// H5 parameter sets guarantee 32 signatures.
-		unsigned char priv_key[64] = {0};
-		unsigned char pub_key[64] = {0};
+		std::vector<unsigned char> priv_key_vec(100000, 0); // Max safe buffer for HSS/LMS
+		std::vector<unsigned char> pub_key_vec(256, 0);
+		unsigned char* priv_key = priv_key_vec.data();
+		unsigned char* pub_key = pub_key_vec.data();
+		CK_ULONG priv_len = 0;
+		CK_ULONG pub_len = 0;
 		
 		CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
-		CK_KEY_TYPE keyType = 0x00000062UL; // CKK_HSS
-		if (pMechanism->mechanism == 0x80000001) keyType = 0x80000001; // CKK_LMS
-		
+		CK_KEY_TYPE keyType = 0;
 		CK_ULONG remainingSigs = 32;
 		const CK_ATTRIBUTE_TYPE ATTR_CKA_HSS_KEYS_REMAINING = 0x0000061cUL;
+		
+		CK_ULONG parameterSet = 0x00000001UL;
+		if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x00004035) {
+			if (pMechanism->pParameter != NULL_PTR && pMechanism->ulParameterLen >= sizeof(CK_ULONG))
+				parameterSet = *(CK_ULONG*)pMechanism->pParameter;
+		}
+
+		if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN) {
+			keyType = CKK_XMSS; // 0x00000047UL
+			xmss_params params;
+			if (xmss_parse_oid(&params, parameterSet)) return CKR_FUNCTION_FAILED;
+			// xmss_keypair writes [OID(4) || core_key], so buffers need OID_LEN extra
+			priv_key_vec.resize(XMSS_OID_LEN + params.sk_bytes);
+			pub_key_vec.resize(XMSS_OID_LEN + params.pk_bytes);
+			priv_key = priv_key_vec.data();
+			pub_key = pub_key_vec.data();
+
+			// Check for NIST KAT deterministic seed (48-byte AES-256-CTR-DRBG)
+			const char* kat_hex = getenv("SOFTHSM_XMSS_KAT_SEED_HEX");
+			if (kat_hex && strlen(kat_hex) >= 96) {
+				unsigned char kat_entropy[48];
+				for (int i = 0; i < 48; i++) {
+					unsigned int b;
+					sscanf(kat_hex + 2*i, "%02x", &b);
+					kat_entropy[i] = (unsigned char)b;
+				}
+				randombytes_kat_init(kat_entropy);
+			}
+
+			int ret = xmss_keypair(pub_key, priv_key, parameterSet);
+
+			// Disable KAT DRBG after keygen (return to OpenSSL RAND_bytes)
+			if (kat_hex && strlen(kat_hex) >= 96) {
+				randombytes_kat_disable();
+			}
+
+			if (ret != 0) return CKR_FUNCTION_FAILED;
+			pub_len = XMSS_OID_LEN + params.pk_bytes;
+			priv_len = XMSS_OID_LEN + params.sk_bytes;
+		}
+		else if (pMechanism->mechanism == 0x00004035) {
+			keyType = CKK_XMSSMT; // 0x00000048UL
+			xmss_params params;
+			if (xmssmt_parse_oid(&params, parameterSet)) return CKR_FUNCTION_FAILED;
+			// xmssmt_keypair writes [OID(4) || core_key]
+			priv_key_vec.resize(XMSS_OID_LEN + params.sk_bytes);
+			pub_key_vec.resize(XMSS_OID_LEN + params.pk_bytes);
+			priv_key = priv_key_vec.data();
+			pub_key = pub_key_vec.data();
+
+			int ret = xmssmt_keypair(pub_key, priv_key, parameterSet);
+			if (ret != 0) return CKR_FUNCTION_FAILED;
+			pub_len = XMSS_OID_LEN + params.pk_bytes;
+			priv_len = XMSS_OID_LEN + params.sk_bytes;
+		}
+		else if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
+			keyType = (pMechanism->mechanism == 0x80000001) ? 0x80000001 : 0x00000046UL;
+
+			// Parse HSS Params
+			unsigned hss_levels = 1;
+			param_set_t lm_type[8] = { LMS_SHA256_N32_H5 };       // IANA 0x05
+			param_set_t lm_ots_type[8] = { LMOTS_SHA256_N32_W8 }; // IANA 0x04
+			if (pMechanism->pParameter && pMechanism->ulParameterLen >= sizeof(CK_HSS_KEY_PAIR_GEN_PARAMS)) {
+				CK_HSS_KEY_PAIR_GEN_PARAMS* hP = (CK_HSS_KEY_PAIR_GEN_PARAMS*)pMechanism->pParameter;
+				hss_levels = hP->ulLevels;
+				if (hss_levels > 8) return CKR_MECHANISM_PARAM_INVALID;
+				for (unsigned i = 0; i < hss_levels; ++i) {
+					lm_type[i] = hP->ulLmsParamSet[i];
+					lm_ots_type[i] = hP->ulLmotsParamSet[i];
+				}
+			}
+
+			pub_len = hss_get_public_key_len(hss_levels, lm_type, lm_ots_type);
+			priv_len = hss_get_private_key_len(hss_levels, lm_type, lm_ots_type);
+			if (pub_len == 0 || priv_len == 0) return CKR_FUNCTION_FAILED;
+
+			priv_key_vec.resize(priv_len);
+			pub_key_vec.resize(pub_len);
+			priv_key = priv_key_vec.data();
+			pub_key = pub_key_vec.data();
+
+			auto hss_rng = [](void *out, size_t len) -> bool {
+				unsigned char *buf = (unsigned char *)out;
+				randombytes(buf, len);
+				return true;
+			};
+
+			const char* kat_hex = getenv("SOFTHSM_XMSS_KAT_SEED_HEX");
+			if (kat_hex && strlen(kat_hex) >= 96) {
+				unsigned char kat_entropy[48];
+				for (int i = 0; i < 48; i++) {
+					unsigned int b;
+					sscanf(kat_hex + 2*i, "%02x", &b);
+					kat_entropy[i] = (unsigned char)b;
+				}
+				randombytes_kat_init(kat_entropy);
+			}
+
+			struct hss_extra_info info;
+			hss_init_extra_info(&info);
+
+			bool bOK = hss_generate_private_key(
+				hss_rng,
+				hss_levels,
+				lm_type, lm_ots_type,
+				NULL, priv_key,
+				pub_key, pub_len,
+				NULL, 0,
+				&info
+			);
+
+			if (kat_hex && strlen(kat_hex) >= 96) {
+				randombytes_kat_disable();
+			}
+
+			if (!bOK) return CKR_FUNCTION_FAILED;
+		}
+		
+		const CK_ATTRIBUTE_TYPE CKA_PARAMETER_SET_M = 0x0000061dUL;
 		
 		const CK_ULONG maxAttribs = 64;
 		
 		// --- PUBLIC KEY ---
+		// NOTE: CKA_VALUE and CKA_PARAMETER_SET have ck4 (MUST NOT be in template
+		// during OBJECT_OP_GENERATE). We set them post-create on the OSObject.
 		CK_ATTRIBUTE pubAttribs[maxAttribs];
 		CK_ULONG pubCount = 0;
 		pubAttribs[pubCount] = { CKA_CLASS, &pubClass, sizeof(pubClass) }; pubCount++;
 		pubAttribs[pubCount] = { CKA_KEY_TYPE, &keyType, sizeof(keyType) }; pubCount++;
 		pubAttribs[pubCount] = { CKA_TOKEN, &ispublicKeyToken, sizeof(ispublicKeyToken) }; pubCount++;
 		pubAttribs[pubCount] = { CKA_PRIVATE, &ispublicKeyPrivate, sizeof(ispublicKeyPrivate) }; pubCount++;
-		pubAttribs[pubCount] = { CKA_VALUE, pub_key, sizeof(pub_key) }; pubCount++;
-		pubAttribs[pubCount] = { ATTR_CKA_HSS_KEYS_REMAINING, &remainingSigs, sizeof(remainingSigs) }; pubCount++;
 
 		if (ulPublicKeyAttributeCount > (maxAttribs - pubCount)) return CKR_TEMPLATE_INCONSISTENT;
 		for (CK_ULONG i = 0; i < ulPublicKeyAttributeCount; ++i) {
 			switch (pPublicKeyTemplate[i].type) {
-				case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE: case CKA_KEY_TYPE: case CKA_VALUE: continue;
+				case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE: case CKA_KEY_TYPE:
+				case CKA_VALUE: case CKA_PARAMETER_SET_M: // ck4: skip during generate
+					continue;
 				default: pubAttribs[pubCount++] = pPublicKeyTemplate[i];
 			}
 		}
 
-		if (rv == CKR_OK)
+		if (rv == CKR_OK) {
 			rv = this->CreateObject(hSession, pubAttribs, pubCount, phPublicKey, OBJECT_OP_GENERATE);
+		}
 
 		// --- PRIVATE KEY ---
 		CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
@@ -468,13 +597,13 @@ CK_RV SoftHSM::C_GenerateKeyPair
 		privAttribs[privCount] = { CKA_KEY_TYPE, &keyType, sizeof(keyType) }; privCount++;
 		privAttribs[privCount] = { CKA_TOKEN, &isprivateKeyToken, sizeof(isprivateKeyToken) }; privCount++;
 		privAttribs[privCount] = { CKA_PRIVATE, &isprivateKeyPrivate, sizeof(isprivateKeyPrivate) }; privCount++;
-		privAttribs[privCount] = { CKA_VALUE, priv_key, sizeof(priv_key) }; privCount++;
-		privAttribs[privCount] = { ATTR_CKA_HSS_KEYS_REMAINING, &remainingSigs, sizeof(remainingSigs) }; privCount++;
 		
 		if (ulPrivateKeyAttributeCount > (maxAttribs - privCount)) return CKR_TEMPLATE_INCONSISTENT;
 		for (CK_ULONG i = 0; i < ulPrivateKeyAttributeCount; ++i) {
 			switch (pPrivateKeyTemplate[i].type) {
-				case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE: case CKA_KEY_TYPE: case CKA_VALUE: continue;
+				case CKA_CLASS: case CKA_TOKEN: case CKA_PRIVATE: case CKA_KEY_TYPE:
+				case CKA_VALUE: case CKA_PARAMETER_SET_M: // ck4: skip during generate
+					continue;
 				default: privAttribs[privCount++] = pPrivateKeyTemplate[i];
 			}
 		}
@@ -482,30 +611,41 @@ CK_RV SoftHSM::C_GenerateKeyPair
 		if (rv == CKR_OK)
 			rv = this->CreateObject(hSession, privAttribs, privCount, phPrivateKey, OBJECT_OP_GENERATE);
 
-		// Map Session attributes (CKA_LOCAL etc)
+		// Post-create: set ck4 attributes (CKA_VALUE, CKA_PARAMETER_SET, etc.)
+		// directly on the OSObject, bypassing P11Attribute::update() checks.
 		if (rv == CKR_OK) {
 			OSObject* osPub = (OSObject*)handleManager->getObject(*phPublicKey);
 			OSObject* osPriv = (OSObject*)handleManager->getObject(*phPrivateKey);
+			
+			ByteString pubValue(pub_key, pub_len);
+			ByteString privValue(priv_key, priv_len);
+			
 			if (osPub && osPub->startTransaction()) {
 				bool bOK = osPub->setAttribute(CKA_LOCAL, true);
 				bOK = bOK && osPub->setAttribute(CKA_KEY_GEN_MECHANISM, pMechanism->mechanism);
+				osPub->setAttribute(CKA_VALUE, pubValue);
+				if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x00004035) {
+					osPub->setAttribute(CKA_PARAMETER_SET_M, (unsigned long)parameterSet);
+				}
+				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
+					osPub->setAttribute(ATTR_CKA_HSS_KEYS_REMAINING, (unsigned long)remainingSigs);
+				}
 				osPub->commitTransaction();
 			}
 			if (osPriv && osPriv->startTransaction()) {
 				bool bOK = osPriv->setAttribute(CKA_LOCAL, true);
 				bOK = bOK && osPriv->setAttribute(CKA_KEY_GEN_MECHANISM, pMechanism->mechanism);
+				osPriv->setAttribute(CKA_VALUE, privValue);
+				if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x00004035) {
+					osPriv->setAttribute(CKA_PARAMETER_SET_M, (unsigned long)parameterSet);
+				}
+				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
+					osPriv->setAttribute(ATTR_CKA_HSS_KEYS_REMAINING, (unsigned long)remainingSigs);
+				}
 				osPriv->commitTransaction();
 			}
 		}
 		return rv;
-	}
-
-	if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN)
-	{
-		unsigned char pk[64];
-		unsigned char sk[132];
-		// xmss_keypair(pk, sk, 0x00000001); // Standard parameter reference
-		return CKR_FUNCTION_NOT_SUPPORTED;
 	}
 
 	return CKR_GENERAL_ERROR;

@@ -10,6 +10,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.7] — 2026-04-05
+
+### Added
+
+- **SP 800-208 full parameter coverage**: All 20 LMS and 16 LMOTS parameter sets now supported
+  across C++ and Rust engines (SHA-256 N32/N24, SHAKE-256 N32/N24).
+- **C++ `StatefulVerifyInit` / `StatefulVerify`**: HSS/LMS/XMSS/XMSS^MT signature verification
+  through PKCS#11 `C_VerifyInit` / `C_Verify`. Previously only signing was implemented in C++.
+- **C++ SHAKE-256 hash type**: Added `HASH_SHAKE256` to hash-sigs library using OpenSSL
+  `EVP_shake256()` for SHAKE-256 XOF output (32-byte and 24-byte modes).
+- **C++ XMSS/XMSS^MT in `C_GetMechanismInfo`**: Registered `CKM_XMSS_KEY_PAIR_GEN`,
+  `CKM_XMSS`, `CKM_XMSSMT_KEY_PAIR_GEN`, `CKM_XMSSMT` with `CKF_SIGN | CKF_VERIFY`.
+- **Rust N24/SHAKE dispatch**: `lms_keygen` dispatches to `Sha256_192`, `Shake256_256`,
+  `Shake256_192` hash types via hbs-lms 0.1.1 built-in support.
+- **NIST ACVP LMS sigVer validation**: 320/320 official demo vectors validated
+  ([usnistgov/ACVP-Server](https://github.com/usnistgov/ACVP-Server)) covering all
+  80 parameter combinations. Test runner: `tests/test_acvp_lms_sigver.py`.
+- **ACVP vector files**: `tests/acvp/lms_keygen_*`, `lms_sigver_*`, `lms_siggen_*` from NIST.
+
+### Fixed
+
+- **XMSS keygen buffer overflow**: Public/private key buffers now correctly allocate
+  `XMSS_OID_LEN + pk/sk_bytes` (was `pk/sk_bytes` only — missing 4-byte OID prefix caused
+  truncation and verify failure).
+- **XMSS `C_Sign` PKCS#11 v3.2 compliance**: Stripped appended message from signature output.
+  `xmss_sign()` returns `[sig || msg]`; `C_Sign` now returns signature-only as required by spec.
+- **XMSS^MT keygen OID parsing**: Changed from `xmss_parse_oid` to `xmssmt_parse_oid` for
+  XMSS^MT parameter sets.
+- **CKP_ constants corrected to IANA registry values**: LMS constants used tree-height values
+  (e.g., `CKP_LMS_SHA256_M32_H10 = 10`) instead of IANA type IDs (`0x06`). LMOTS constants
+  used Winternitz W values (e.g., `CKP_LMOTS_SHA256_N32_W4 = 4`) instead of type IDs (`0x03`).
+  All corrected to match RFC 8554 + SP 800-208 IANA registry.
+- **C++ dead code removed**: Unreachable XMSS keygen stub at `SoftHSM_keygen.cpp:649`.
+- **Session `verifyKeyHandle` initialization**: Both constructors now initialize
+  `signKeyHandle` and `verifyKeyHandle` to `CK_INVALID_HANDLE`.
+
+### Changed
+
+- **Gap analysis G10 resolved**: `docs/gap-analysis-pkcs11-v3.2.md` §3.4 updated from
+  "out of scope" to "RESOLVED" with implementation details for C++ and Rust engines.
+
+---
+
 ## [0.4.6] — 2026-04-04
 
 ### Added

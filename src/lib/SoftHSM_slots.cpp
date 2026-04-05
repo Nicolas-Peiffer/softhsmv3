@@ -82,7 +82,7 @@ CK_RV SoftHSM::C_Initialize(CK_VOID_PTR pInitArgs)
 		// Must be set to NULL_PTR in this version of PKCS#11, OR used for ACVP bypass!
 		if (args->pReserved != NULL_PTR)
 		{
-			unsigned int* acvpArgs = (unsigned int*)args->pReserved;
+			CK_ULONG* acvpArgs = (CK_ULONG*)args->pReserved;
 			if (acvpArgs[0] != 0 && acvpArgs[1] == 32)
 			{
 				extern void OSSLRNG_enableACVP(unsigned char* seed);
@@ -487,6 +487,10 @@ void SoftHSM::prepareSupportedMechanisms(std::map<std::string, CK_MECHANISM_TYPE
 	t["CKM_HSS"]			= CKM_HSS;
 	t["CKM_LMS_KEY_PAIR_GEN"]	= CKM_LMS_KEY_PAIR_GEN;
 	t["CKM_LMS"]			= CKM_LMS;
+	t["CKM_XMSS_KEY_PAIR_GEN"]      = 0x00004034;
+	t["CKM_XMSSMT_KEY_PAIR_GEN"]    = 0x00004035;
+	t["CKM_XMSS"]                   = 0x00004036;
+	t["CKM_XMSSMT"]                 = 0x00004037;
 
 	// Keccak-256 (G11 — vendor, Rust engine only; C++ returns CKR_MECHANISM_INVALID)
 	t["CKM_KECCAK_256"]		= CKM_KECCAK_256;
@@ -951,6 +955,18 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 			break;
 		case CKM_HSS:
 		case CKM_LMS:  // vendor — single-level LMS sign/verify
+			pInfo->ulMinKeySize = 0;
+			pInfo->ulMaxKeySize = 0;
+			pInfo->flags = CKF_SIGN | CKF_VERIFY;
+			break;
+		case 0x00004034: // CKM_XMSS_KEY_PAIR_GEN
+		case 0x00004035: // CKM_XMSSMT_KEY_PAIR_GEN
+			pInfo->ulMinKeySize = 0;
+			pInfo->ulMaxKeySize = 0;
+			pInfo->flags = CKF_GENERATE_KEY_PAIR;
+			break;
+		case 0x00004036: // CKM_XMSS
+		case 0x00004037: // CKM_XMSSMT
 			pInfo->ulMinKeySize = 0;
 			pInfo->ulMaxKeySize = 0;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;

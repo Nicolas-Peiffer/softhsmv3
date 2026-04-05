@@ -1277,22 +1277,95 @@ protected:
 };
 
 /*****************************************
- * CKA_HSS_KEYS_REMAINING  (PKCS#11 v3.2)
- * Read-only counter tracking remaining stateful HSS/LMS signature operations
+ * CKA_HSS_LEVELS  (PKCS#11 v3.2 §6.14)
+ * Number of HSS levels (1–8); immutable after key generation.
+ *****************************************/
+
+class P11AttrHssLevels : public P11Attribute
+{
+public:
+	P11AttrHssLevels(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LEVELS; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+
+protected:
+	virtual bool setDefault();
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
+/*****************************************
+ * CKA_HSS_LMS_TYPE  (PKCS#11 v3.2 §6.14)
+ * LMS algorithm type for single-level HSS key.
+ *****************************************/
+
+class P11AttrHssLmsType : public P11Attribute
+{
+public:
+	P11AttrHssLmsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPE; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+
+protected:
+	virtual bool setDefault();
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
+/*****************************************
+ * CKA_HSS_LMOTS_TYPE  (PKCS#11 v3.2 §6.14)
+ * LMOTS algorithm type for single-level HSS key.
+ *****************************************/
+
+class P11AttrHssLmotsType : public P11Attribute
+{
+public:
+	P11AttrHssLmotsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPE; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+
+protected:
+	virtual bool setDefault();
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
+/*****************************************
+ * CKA_HSS_LMS_TYPES  (PKCS#11 v3.2 §6.14)
+ * Packed array of CK_ULONG LMS types for multi-level HSS (one per level).
+ *****************************************/
+
+class P11AttrHssLmsTypes : public P11Attribute
+{
+public:
+	P11AttrHssLmsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPES; checks = ck1|inchecks; }
+
+protected:
+	virtual bool setDefault();
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
+/*****************************************
+ * CKA_HSS_LMOTS_TYPES  (PKCS#11 v3.2 §6.14)
+ * Packed array of CK_ULONG LMOTS types for multi-level HSS (one per level).
+ *****************************************/
+
+class P11AttrHssLmotsTypes : public P11Attribute
+{
+public:
+	P11AttrHssLmotsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPES; checks = ck1|inchecks; }
+
+protected:
+	virtual bool setDefault();
+	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
+};
+
+/*****************************************
+ * CKA_HSS_KEYS_REMAINING  (PKCS#11 v3.2 §6.14)
+ * Remaining signature operations; decremented by the token on each C_Sign.
+ * Read-only to the application; writable only during key generation.
  *****************************************/
 
 class P11AttrHssKeysRemaining : public P11Attribute
 {
 public:
-	// Constructor
-	P11AttrHssKeysRemaining(OSObject* inobject) : P11Attribute(inobject) { type = 0x0000061cUL; size = sizeof(CK_ULONG); checks = 0; }
+	P11AttrHssKeysRemaining(OSObject* inobject) : P11Attribute(inobject) { type = CKA_HSS_KEYS_REMAINING; size = sizeof(CK_ULONG); checks = 0; }
 
 protected:
-	// Set the default value of the attribute
 	virtual bool setDefault();
-
-	// Update the value if allowed
 	virtual CK_RV updateAttr(Token *token, bool isPrivate, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int op);
 };
 
 #endif // !_SOFTHSM_V2_P11ATTRIBUTES_H
+

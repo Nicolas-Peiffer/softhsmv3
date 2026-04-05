@@ -414,16 +414,46 @@ pub const CKA_HSS_KEYS_REMAINING: u32 = 0x0000_061c;
 // Values match PKCS#11 v3.2 §6.14 table (tree-height based naming)
 // NOTE: hbs-lms LmsAlgorithm enum uses RFC 8554 type IDs — use ckp_to_lms_algo() in lms.rs
 
-pub const CKP_LMS_SHA256_M32_H5: u32 = 5;
-pub const CKP_LMS_SHA256_M32_H10: u32 = 10;
-pub const CKP_LMS_SHA256_M32_H15: u32 = 15;
-pub const CKP_LMS_SHA256_M32_H20: u32 = 20;
-pub const CKP_LMS_SHA256_M32_H25: u32 = 25;
+// IANA "Leighton-Micali Signatures" registry (RFC 8554 + SP 800-208)
+// https://www.iana.org/assignments/leighton-micali-signatures/
+pub const CKP_LMS_SHA256_M32_H5: u32 = 0x05;
+pub const CKP_LMS_SHA256_M32_H10: u32 = 0x06;
+pub const CKP_LMS_SHA256_M32_H15: u32 = 0x07;
+pub const CKP_LMS_SHA256_M32_H20: u32 = 0x08;
+pub const CKP_LMS_SHA256_M32_H25: u32 = 0x09;
+pub const CKP_LMS_SHA256_M24_H5: u32 = 0x0A;
+pub const CKP_LMS_SHA256_M24_H10: u32 = 0x0B;
+pub const CKP_LMS_SHA256_M24_H15: u32 = 0x0C;
+pub const CKP_LMS_SHA256_M24_H20: u32 = 0x0D;
+pub const CKP_LMS_SHA256_M24_H25: u32 = 0x0E;
+pub const CKP_LMS_SHAKE_M32_H5: u32 = 0x0F;
+pub const CKP_LMS_SHAKE_M32_H10: u32 = 0x10;
+pub const CKP_LMS_SHAKE_M32_H15: u32 = 0x11;
+pub const CKP_LMS_SHAKE_M32_H20: u32 = 0x12;
+pub const CKP_LMS_SHAKE_M32_H25: u32 = 0x13;
+pub const CKP_LMS_SHAKE_M24_H5: u32 = 0x14;
+pub const CKP_LMS_SHAKE_M24_H10: u32 = 0x15;
+pub const CKP_LMS_SHAKE_M24_H15: u32 = 0x16;
+pub const CKP_LMS_SHAKE_M24_H20: u32 = 0x17;
+pub const CKP_LMS_SHAKE_M24_H25: u32 = 0x18;
 
-pub const CKP_LMOTS_SHA256_N32_W1: u32 = 1;
-pub const CKP_LMOTS_SHA256_N32_W2: u32 = 2;
-pub const CKP_LMOTS_SHA256_N32_W4: u32 = 4;
-pub const CKP_LMOTS_SHA256_N32_W8: u32 = 8;
+// IANA "LM-OTS Signatures" registry (RFC 8554 + SP 800-208)
+pub const CKP_LMOTS_SHA256_N32_W1: u32 = 0x01;
+pub const CKP_LMOTS_SHA256_N32_W2: u32 = 0x02;
+pub const CKP_LMOTS_SHA256_N32_W4: u32 = 0x03;
+pub const CKP_LMOTS_SHA256_N32_W8: u32 = 0x04;
+pub const CKP_LMOTS_SHA256_N24_W1: u32 = 0x05;
+pub const CKP_LMOTS_SHA256_N24_W2: u32 = 0x06;
+pub const CKP_LMOTS_SHA256_N24_W4: u32 = 0x07;
+pub const CKP_LMOTS_SHA256_N24_W8: u32 = 0x08;
+pub const CKP_LMOTS_SHAKE_N32_W1: u32 = 0x09;
+pub const CKP_LMOTS_SHAKE_N32_W2: u32 = 0x0A;
+pub const CKP_LMOTS_SHAKE_N32_W4: u32 = 0x0B;
+pub const CKP_LMOTS_SHAKE_N32_W8: u32 = 0x0C;
+pub const CKP_LMOTS_SHAKE_N24_W1: u32 = 0x0D;
+pub const CKP_LMOTS_SHAKE_N24_W2: u32 = 0x0E;
+pub const CKP_LMOTS_SHAKE_N24_W4: u32 = 0x0F;
+pub const CKP_LMOTS_SHAKE_N24_W8: u32 = 0x10;
 
 // ── XMSS Parameter Set Constants ─────────────────────────────────────────────
 

@@ -1353,15 +1353,28 @@ pub fn C_GenerateKeyPair(
                 // CK_MECHANISM layout: mechType(4) + pParameter(4) + ulParameterLen(4)
                 let p_param_ptr = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
                 let param_len = *(p_mechanism.add(8) as *const u32);
-                if p_param_ptr.is_null() || param_len < 68 {
-                    return CKR_MECHANISM_PARAM_INVALID;
+                let mut param_code = 0;
+                if !p_param_ptr.is_null() && param_len >= 4 {
+                    // Typical PKCS11 may pass CK_XMSS_PARAMS struct. For now, read the first word
+                    param_code = *p_param_ptr;
                 }
-                
-                let param_code = *p_param_ptr.add(1); // ulLmsParamSet[0] holds the XMSS param
 
-                // For cross-validation scaffolding, populate mock keys
-                let pub_bytes = vec![0x11; 64];
-                let priv_bytes = vec![0x22; 128];
+                let mut xmss_param = get_attr_ulong(
+                    p_public_key_template,
+                    ul_public_key_attribute_count,
+                    CKA_XMSS_PARAM_SET,
+                )
+                .unwrap_or(param_code);
+                
+                if xmss_param == 0 {
+                    xmss_param = CKP_XMSS_SHA2_10_256;
+                }
+
+                let (pub_bytes, priv_bytes) =
+                    match crate::crypto::xmss_bridge::xmss_keygen(xmss_param) {
+                        Ok(pair) => pair,
+                        Err(_) => return CKR_FUNCTION_FAILED,
+                    };
 
                 let mut pub_attrs = HashMap::new();
                 let mut prv_attrs = HashMap::new();
@@ -1374,6 +1387,7 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut pub_attrs, CKA_PRIVATE, false);
                 store_bool(&mut pub_attrs, CKA_VERIFY, true);
                 store_bool(&mut pub_attrs, CKA_LOCAL, true);
+                store_bool(&mut pub_attrs, CKA_EXTRACTABLE, true);
                 pub_attrs.insert(CKA_VALUE, pub_bytes);
                 // Private key attributes
                 store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
@@ -1898,9 +1912,15 @@ pub fn C_Sign(
                 let leaf_index = get_object_attr_u64(hkey, CKA_LEAF_INDEX).unwrap_or(0);
                 crate::crypto::lms::lms_sign(leaf_index, max_leaves, &priv_bytes, msg, &mut update_fn)
             } else if mech == CKM_XMSS {
-                // Mock signature for cross-validation UI workshop
-                let sig = vec![0x33; 2500];
-                Ok(sig)
+                let xmss_param = get_object_attr_u32(hkey, CKA_XMSS_PARAM_SET)
+                    .unwrap_or(CKP_XMSS_SHA2_10_256);
+                match crate::crypto::xmss_bridge::xmss_sign(xmss_param, &priv_bytes, msg) {
+                    Ok((sig, updated_sk)) => match update_fn(&updated_sk) {
+                        Ok(_) => Ok(sig),
+                        Err(_) => Err(CKR_FUNCTION_FAILED),
+                    },
+                    Err(e) => Err(e),
+                }
             } else {
                 crate::crypto::lms::hss_sign(&priv_bytes, msg, &mut update_fn)
             };
@@ -2082,7 +2102,9 @@ pub fn C_Verify(
             let ok = if mech == CKM_LMS {
                 crate::crypto::lms::lms_verify(&pub_bytes, msg, sig_bytes)
             } else if mech == CKM_XMSS {
-                true // Mock verify for cross-validation
+                let xmss_param = get_object_attr_u32(hkey, CKA_XMSS_PARAM_SET)
+                    .unwrap_or(CKP_XMSS_SHA2_10_256);
+                crate::crypto::xmss_bridge::xmss_verify(xmss_param, &pub_bytes, msg, sig_bytes)
             } else {
                 crate::crypto::lms::hss_verify(&pub_bytes, msg, sig_bytes)
             };
@@ -4386,5 +4408,23 @@ impl SoftHsmRust {
         );
 
         js_sys::Uint8Array::from(&out[..out_len as usize])
+    }
+}
+
+// ----------------------------------------------------------------------------
+// KAT Testing Seed Hook
+// ----------------------------------------------------------------------------
+#[wasm_bindgen(js_name = _set_kat_seed)]
+pub fn set_kat_seed(seed_ptr: *const u8, seed_len: u32) {
+    if seed_len == 96 && !seed_ptr.is_null() {
+        let mut seed = [0u8; 96];
+        unsafe {
+            std::ptr::copy_nonoverlapping(seed_ptr, seed.as_mut_ptr(), 96);
+            crate::crypto::xmss_bridge::KAT_SEED = Some(seed);
+        }
+    } else {
+        unsafe {
+            crate::crypto::xmss_bridge::KAT_SEED = None;
+        }
     }
 }

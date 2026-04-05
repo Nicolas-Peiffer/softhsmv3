@@ -2039,78 +2039,275 @@ bool P11MLKEMPrivateKeyObj::init(OSObject *inobject)
 	return true;
 }
 
-// ─── HSS/LMS Public Key (PKCS#11 v3.2) ────────────────────────────────────────
+// ─── HSS Public Key (PKCS#11 v3.2, CKK_HSS = 0x46) ──────────────────────────
 
-// Constructor
-P11HSSPublicKeyObj::P11HSSPublicKeyObj()
-{
-	initialized = false;
-}
+P11HSSPublicKeyObj::P11HSSPublicKeyObj() { initialized = false; }
 
-// Add attributes
 bool P11HSSPublicKeyObj::init(OSObject *inobject)
 {
 	if (initialized) return true;
 	if (inobject == NULL) return false;
-
-	// Create parent
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	// Create attributes
-	P11Attribute* attrValue        = new P11AttrValue(osobject, 0);
-	P11Attribute* attrHssRemaining = new P11AttrHssKeysRemaining(osobject);
+	// Standard PKCS#11 v3.2 §6.14 HSS public key attributes
+	P11Attribute* attrValue         = new P11AttrValue(osobject, 0);
+	P11Attribute* attrVerify        = new P11AttrVerify(osobject);
+	P11Attribute* attrEncrypt       = new P11AttrEncrypt(osobject);
+	P11Attribute* attrWrap          = new P11AttrWrap(osobject);
+	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject);
+	P11Attribute* attrLmsType       = new P11AttrHssLmsType(osobject);
+	P11Attribute* attrLmotsType     = new P11AttrHssLmotsType(osobject);
+	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject);
+	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
-	// Initialize the attributes
-	if (!attrValue->init() || !attrHssRemaining->init())
+	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
+	    !attrWrap->init() || !attrLevels->init() || !attrLmsType->init() ||
+	    !attrLmotsType->init() || !attrLmsTypes->init() || !attrLmotsTypes->init() ||
+	    !attrKeysRemaining->init())
 	{
-		ERROR_MSG("Could not initialize the attribute");
-		delete attrValue;
-		delete attrHssRemaining;
+		ERROR_MSG("Could not initialize HSS public key attribute");
+		delete attrValue; delete attrVerify; delete attrEncrypt; delete attrWrap;
+		delete attrLevels; delete attrLmsType; delete attrLmotsType;
+		delete attrLmsTypes; delete attrLmotsTypes; delete attrKeysRemaining;
 		return false;
 	}
 
-	// Add them to the map
-	attributes[attrValue->getType()]        = attrValue;
-	attributes[attrHssRemaining->getType()] = attrHssRemaining;
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrVerify->getType()]        = attrVerify;
+	attributes[attrEncrypt->getType()]       = attrEncrypt;
+	attributes[attrWrap->getType()]          = attrWrap;
+	attributes[attrLevels->getType()]        = attrLevels;
+	attributes[attrLmsType->getType()]       = attrLmsType;
+	attributes[attrLmotsType->getType()]     = attrLmotsType;
+	attributes[attrLmsTypes->getType()]      = attrLmsTypes;
+	attributes[attrLmotsTypes->getType()]    = attrLmotsTypes;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
 
 	initialized = true;
 	return true;
 }
 
-// ─── HSS/LMS Private Key (PKCS#11 v3.2) ───────────────────────────────────────
+// ─── HSS Private Key (PKCS#11 v3.2, CKK_HSS = 0x46) ─────────────────────────
 
-// Constructor
-P11HSSPrivateKeyObj::P11HSSPrivateKeyObj()
-{
-	initialized = false;
-}
+P11HSSPrivateKeyObj::P11HSSPrivateKeyObj() { initialized = false; }
 
-// Add attributes
 bool P11HSSPrivateKeyObj::init(OSObject *inobject)
 {
 	if (initialized) return true;
 	if (inobject == NULL) return false;
-
-	// Create parent
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
-	// Create attributes
-	P11Attribute* attrValue        = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
-	P11Attribute* attrHssRemaining = new P11AttrHssKeysRemaining(osobject);
+	// Standard PKCS#11 v3.2 §6.14 HSS private key attributes
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	P11Attribute* attrSign          = new P11AttrSign(osobject);
+	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
+	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
+	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
+	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
+	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
+	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject);
+	P11Attribute* attrLmsType       = new P11AttrHssLmsType(osobject);
+	P11Attribute* attrLmotsType     = new P11AttrHssLmotsType(osobject);
+	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject);
+	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
-	// Initialize the attributes
-	if (!attrValue->init() || !attrHssRemaining->init())
+	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||
+	    !attrExtractable->init() || !attrDecrypt->init() || !attrUnwrap->init() ||
+	    !attrDerive->init() || !attrLevels->init() || !attrLmsType->init() ||
+	    !attrLmotsType->init() || !attrLmsTypes->init() || !attrLmotsTypes->init() ||
+	    !attrKeysRemaining->init())
 	{
-		ERROR_MSG("Could not initialize the attribute");
-		delete attrValue;
-		delete attrHssRemaining;
+		ERROR_MSG("Could not initialize HSS private key attribute");
+		delete attrValue; delete attrSign; delete attrSensitive; delete attrExtractable;
+		delete attrDecrypt; delete attrUnwrap; delete attrDerive;
+		delete attrLevels; delete attrLmsType; delete attrLmotsType;
+		delete attrLmsTypes; delete attrLmotsTypes; delete attrKeysRemaining;
 		return false;
 	}
 
-	// Add them to the map
-	attributes[attrValue->getType()]        = attrValue;
-	attributes[attrHssRemaining->getType()] = attrHssRemaining;
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrSign->getType()]          = attrSign;
+	attributes[attrSensitive->getType()]     = attrSensitive;
+	attributes[attrExtractable->getType()]   = attrExtractable;
+	attributes[attrDecrypt->getType()]       = attrDecrypt;
+	attributes[attrUnwrap->getType()]        = attrUnwrap;
+	attributes[attrDerive->getType()]        = attrDerive;
+	attributes[attrLevels->getType()]        = attrLevels;
+	attributes[attrLmsType->getType()]       = attrLmsType;
+	attributes[attrLmotsType->getType()]     = attrLmotsType;
+	attributes[attrLmsTypes->getType()]      = attrLmsTypes;
+	attributes[attrLmotsTypes->getType()]    = attrLmotsTypes;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
 
 	initialized = true;
 	return true;
 }
+
+// ─── XMSS Public Key (PKCS#11 v3.2, CKK_XMSS = 0x47) ────────────────────────
+
+P11XMSSPublicKeyObj::P11XMSSPublicKeyObj() { initialized = false; }
+
+bool P11XMSSPublicKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+	if (!P11PublicKeyObj::init(inobject)) return false;
+
+	// Standard PKCS#11 v3.2 XMSS public key: CKA_PARAMETER_SET selects variant
+	P11Attribute* attrValue      = new P11AttrValue(osobject, 0);
+	P11Attribute* attrVerify     = new P11AttrVerify(osobject);
+	P11Attribute* attrEncrypt    = new P11AttrEncrypt(osobject);
+	P11Attribute* attrWrap       = new P11AttrWrap(osobject);
+	P11Attribute* attrParamSet   = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
+	    !attrWrap->init() || !attrParamSet->init() || !attrKeysRemaining->init())
+	{
+		ERROR_MSG("Could not initialize XMSS public key attribute");
+		delete attrValue; delete attrVerify; delete attrEncrypt;
+		delete attrWrap; delete attrParamSet; delete attrKeysRemaining;
+		return false;
+	}
+
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrVerify->getType()]        = attrVerify;
+	attributes[attrEncrypt->getType()]       = attrEncrypt;
+	attributes[attrWrap->getType()]          = attrWrap;
+	attributes[attrParamSet->getType()]      = attrParamSet;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
+
+	initialized = true;
+	return true;
+}
+
+// ─── XMSS Private Key (PKCS#11 v3.2, CKK_XMSS = 0x47) ───────────────────────
+
+P11XMSSPrivateKeyObj::P11XMSSPrivateKeyObj() { initialized = false; }
+
+bool P11XMSSPrivateKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+	if (!P11PrivateKeyObj::init(inobject)) return false;
+
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	P11Attribute* attrSign          = new P11AttrSign(osobject);
+	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
+	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
+	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
+	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
+	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||
+	    !attrExtractable->init() || !attrDecrypt->init() || !attrUnwrap->init() ||
+	    !attrDerive->init() || !attrParamSet->init() || !attrKeysRemaining->init())
+	{
+		ERROR_MSG("Could not initialize XMSS private key attribute");
+		delete attrValue; delete attrSign; delete attrSensitive; delete attrExtractable;
+		delete attrDecrypt; delete attrUnwrap; delete attrDerive;
+		delete attrParamSet; delete attrKeysRemaining;
+		return false;
+	}
+
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrSign->getType()]          = attrSign;
+	attributes[attrSensitive->getType()]     = attrSensitive;
+	attributes[attrExtractable->getType()]   = attrExtractable;
+	attributes[attrDecrypt->getType()]       = attrDecrypt;
+	attributes[attrUnwrap->getType()]        = attrUnwrap;
+	attributes[attrDerive->getType()]        = attrDerive;
+	attributes[attrParamSet->getType()]      = attrParamSet;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
+
+	initialized = true;
+	return true;
+}
+
+// ─── XMSS-MT Public Key (PKCS#11 v3.2, CKK_XMSSMT = 0x48) ──────────────────
+
+P11XMSSMTPublicKeyObj::P11XMSSMTPublicKeyObj() { initialized = false; }
+
+bool P11XMSSMTPublicKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+	if (!P11PublicKeyObj::init(inobject)) return false;
+
+	P11Attribute* attrValue         = new P11AttrValue(osobject, 0);
+	P11Attribute* attrVerify        = new P11AttrVerify(osobject);
+	P11Attribute* attrEncrypt       = new P11AttrEncrypt(osobject);
+	P11Attribute* attrWrap          = new P11AttrWrap(osobject);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
+	    !attrWrap->init() || !attrParamSet->init() || !attrKeysRemaining->init())
+	{
+		ERROR_MSG("Could not initialize XMSSMT public key attribute");
+		delete attrValue; delete attrVerify; delete attrEncrypt;
+		delete attrWrap; delete attrParamSet; delete attrKeysRemaining;
+		return false;
+	}
+
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrVerify->getType()]        = attrVerify;
+	attributes[attrEncrypt->getType()]       = attrEncrypt;
+	attributes[attrWrap->getType()]          = attrWrap;
+	attributes[attrParamSet->getType()]      = attrParamSet;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
+
+	initialized = true;
+	return true;
+}
+
+// ─── XMSS-MT Private Key (PKCS#11 v3.2, CKK_XMSSMT = 0x48) ─────────────────
+
+P11XMSSMTPrivateKeyObj::P11XMSSMTPrivateKeyObj() { initialized = false; }
+
+bool P11XMSSMTPrivateKeyObj::init(OSObject *inobject)
+{
+	if (initialized) return true;
+	if (inobject == NULL) return false;
+	if (!P11PrivateKeyObj::init(inobject)) return false;
+
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	P11Attribute* attrSign          = new P11AttrSign(osobject);
+	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
+	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
+	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
+	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
+	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
+
+	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||
+	    !attrExtractable->init() || !attrDecrypt->init() || !attrUnwrap->init() ||
+	    !attrDerive->init() || !attrParamSet->init() || !attrKeysRemaining->init())
+	{
+		ERROR_MSG("Could not initialize XMSSMT private key attribute");
+		delete attrValue; delete attrSign; delete attrSensitive; delete attrExtractable;
+		delete attrDecrypt; delete attrUnwrap; delete attrDerive;
+		delete attrParamSet; delete attrKeysRemaining;
+		return false;
+	}
+
+	attributes[attrValue->getType()]         = attrValue;
+	attributes[attrSign->getType()]          = attrSign;
+	attributes[attrSensitive->getType()]     = attrSensitive;
+	attributes[attrExtractable->getType()]   = attrExtractable;
+	attributes[attrDecrypt->getType()]       = attrDecrypt;
+	attributes[attrUnwrap->getType()]        = attrUnwrap;
+	attributes[attrDerive->getType()]        = attrDerive;
+	attributes[attrParamSet->getType()]      = attrParamSet;
+	attributes[attrKeysRemaining->getType()] = attrKeysRemaining;
+
+	initialized = true;
+	return true;
+}
+
+

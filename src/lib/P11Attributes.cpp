@@ -2605,3 +2605,91 @@ CK_RV P11AttrHssKeysRemaining::updateAttr(Token* /*token*/, bool /*isPrivate*/, 
 	osobject->setAttribute(type, attr);
 	return CKR_OK;
 }
+
+/*****************************************
+ * CKA_HSS_LEVELS  (PKCS#11 v3.2 §6.14)
+ *****************************************/
+
+bool P11AttrHssLevels::setDefault()
+{
+	OSAttribute attr((unsigned long)0);
+	return osobject->setAttribute(type, attr);
+}
+
+CK_RV P11AttrHssLevels::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	if (ulValueLen != sizeof(CK_ULONG)) return CKR_ATTRIBUTE_VALUE_INVALID;
+	OSAttribute attr(*(CK_ULONG*)pValue);
+	osobject->setAttribute(type, attr);
+	return CKR_OK;
+}
+
+/*****************************************
+ * CKA_HSS_LMS_TYPE  (PKCS#11 v3.2 §6.14)
+ *****************************************/
+
+bool P11AttrHssLmsType::setDefault()
+{
+	OSAttribute attr((unsigned long)0);
+	return osobject->setAttribute(type, attr);
+}
+
+CK_RV P11AttrHssLmsType::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	if (ulValueLen != sizeof(CK_ULONG)) return CKR_ATTRIBUTE_VALUE_INVALID;
+	OSAttribute attr(*(CK_ULONG*)pValue);
+	osobject->setAttribute(type, attr);
+	return CKR_OK;
+}
+
+/*****************************************
+ * CKA_HSS_LMS_TYPES  (PKCS#11 v3.2 §6.14)
+ *****************************************/
+
+bool P11AttrHssLmsTypes::setDefault()
+{
+	OSAttribute attr(ByteString(""));
+	return osobject->setAttribute(type, attr);
+}
+
+CK_RV P11AttrHssLmsTypes::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	ByteString value((unsigned char*)pValue, ulValueLen);
+	osobject->setAttribute(type, value);
+	return CKR_OK;
+}
+
+/*****************************************
+ * CKA_HSS_LMOTS_TYPE  (PKCS#11 v3.2 §6.14)
+ *****************************************/
+
+bool P11AttrHssLmotsType::setDefault()
+{
+	OSAttribute attr((unsigned long)0);
+	return osobject->setAttribute(type, attr);
+}
+
+CK_RV P11AttrHssLmotsType::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	if (ulValueLen != sizeof(CK_ULONG)) return CKR_ATTRIBUTE_VALUE_INVALID;
+	OSAttribute attr(*(CK_ULONG*)pValue);
+	osobject->setAttribute(type, attr);
+	return CKR_OK;
+}
+
+/*****************************************
+ * CKA_HSS_LMOTS_TYPES  (PKCS#11 v3.2 §6.14)
+ *****************************************/
+
+bool P11AttrHssLmotsTypes::setDefault()
+{
+	OSAttribute attr(ByteString(""));
+	return osobject->setAttribute(type, attr);
+}
+
+CK_RV P11AttrHssLmotsTypes::updateAttr(Token* /*token*/, bool /*isPrivate*/, CK_VOID_PTR pValue, CK_ULONG ulValueLen, int /*op*/)
+{
+	ByteString value((unsigned char*)pValue, ulValueLen);
+	osobject->setAttribute(type, value);
+	return CKR_OK;
+}

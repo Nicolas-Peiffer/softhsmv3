@@ -466,17 +466,13 @@ protected:
 	bool initialized;
 };
 
-// ─── HSS/LMS (PKCS#11 v3.2, CKK_HSS = 0x62, CKK_LMS = 0x80000001) ──────────
+// ─── HSS/LMS (PKCS#11 v3.2, CKK_HSS = 0x46) ─────────────────────────────────
 
 class P11HSSPublicKeyObj : public P11PublicKeyObj
 {
 public:
-	// Constructor
 	P11HSSPublicKeyObj();
-
-	// Add attributes
 	virtual bool init(OSObject *inobject);
-
 protected:
 	bool initialized;
 };
@@ -484,12 +480,48 @@ protected:
 class P11HSSPrivateKeyObj : public P11PrivateKeyObj
 {
 public:
-	// Constructor
 	P11HSSPrivateKeyObj();
-
-	// Add attributes
 	virtual bool init(OSObject *inobject);
+protected:
+	bool initialized;
+};
 
+// ─── XMSS (PKCS#11 v3.2, CKK_XMSS = 0x47) ───────────────────────────────────
+
+class P11XMSSPublicKeyObj : public P11PublicKeyObj
+{
+public:
+	P11XMSSPublicKeyObj();
+	virtual bool init(OSObject *inobject);
+protected:
+	bool initialized;
+};
+
+class P11XMSSPrivateKeyObj : public P11PrivateKeyObj
+{
+public:
+	P11XMSSPrivateKeyObj();
+	virtual bool init(OSObject *inobject);
+protected:
+	bool initialized;
+};
+
+// ─── XMSS-MT (PKCS#11 v3.2, CKK_XMSSMT = 0x48) ─────────────────────────────
+
+class P11XMSSMTPublicKeyObj : public P11PublicKeyObj
+{
+public:
+	P11XMSSMTPublicKeyObj();
+	virtual bool init(OSObject *inobject);
+protected:
+	bool initialized;
+};
+
+class P11XMSSMTPrivateKeyObj : public P11PrivateKeyObj
+{
+public:
+	P11XMSSMTPrivateKeyObj();
+	virtual bool init(OSObject *inobject);
 protected:
 	bool initialized;
 };
