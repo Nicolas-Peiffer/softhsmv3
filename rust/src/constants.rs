@@ -57,7 +57,6 @@ pub const CKK_HSS: u32 = 0x0000_0046;  // HSS/LMS multi-level (standard)
 pub const CKK_XMSS: u32 = 0x0000_0047; // XMSS single-tree (standard)
 pub const CKK_XMSSMT: u32 = 0x0000_0048; // XMSS^MT multi-tree (standard)
 // Vendor: single-level LMS (not in PKCS#11 v3.2 standard; same numeric space as CKK is separate from CKM)
-pub const CKK_LMS: u32 = 0x8000_0001;
 
 // ── PKCS#11 Semantic Attribute Types ─────────────────────────────────────────
 
@@ -349,8 +348,6 @@ pub const SUPPORTED_MECHS: &[u32] = &[
     CKM_HSS,
     CKM_XMSS_KEY_PAIR_GEN,
     CKM_XMSS,
-    CKM_LMS_KEY_PAIR_GEN,
-    CKM_LMS,
     // Keccak-256 digest (G11 — Rust engine only)
     CKM_KECCAK_256,
 ];
@@ -390,9 +387,6 @@ pub const CKM_HSS: u32 = 0x0000_4033;
 pub const CKM_XMSS_KEY_PAIR_GEN: u32 = 0x0000_4034;
 pub const CKM_XMSS: u32 = 0x0000_4036;
 
-// Vendor: single-level LMS (not in PKCS#11 v3.2 standard CKM range)
-pub const CKM_LMS_KEY_PAIR_GEN: u32 = 0x8000_0001;
-pub const CKM_LMS: u32 = 0x8000_0002;
 
 // Vendor: Keccak-256 digest (G11 — Ethereum address derivation, Rust engine only)
 pub const CKM_KECCAK_256: u32 = 0x8000_0010;

@@ -678,11 +678,12 @@ pub fn get_sig_len(mech: u32, hkey: u32) -> u32 {
         // For n=32: LMOTS(W1)=4+32+265*32=8724, LMOTS(W4)=4+32+67*32=2180, LMOTS(W8)=4+32+34*32=1124
         // LMS(H5/W4)=2348, LMS(H25/W4)=8188; HSS(L=8,H5/W4) ≈ 8*(2348+52)+4 = 19204
         // Return an upper bound based on LMS param set and levels; the actual write sets pul_sig_len precisely.
-        CKM_LMS => {
+        CKM_HSS => {
             let lms_param = get_object_attr_u32(hkey, CKA_LMS_PARAM_SET)
                 .unwrap_or(CKP_LMS_SHA256_M32_H5);
             let lmots_param = get_object_attr_u32(hkey, CKA_LMOTS_PARAM_SET)
                 .unwrap_or(CKP_LMOTS_SHA256_N32_W4);
+            // Works for both single-level LMS (levels=1) and multi-level HSS
             lms_single_sig_len(lms_param, lmots_param)
         }
         CKM_HSS => {

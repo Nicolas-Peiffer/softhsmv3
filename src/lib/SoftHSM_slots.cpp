@@ -482,11 +482,8 @@ void SoftHSM::prepareSupportedMechanisms(std::map<std::string, CK_MECHANISM_TYPE
 
 	// LMS / HSS stateful hash-based signatures (G10)
 	// CKM_HSS / CKM_HSS_KEY_PAIR_GEN are standard PKCS#11 v3.2 §6.14
-	// CKM_LMS / CKM_LMS_KEY_PAIR_GEN are vendor extensions for single-level keygen
 	t["CKM_HSS_KEY_PAIR_GEN"]	= CKM_HSS_KEY_PAIR_GEN;
 	t["CKM_HSS"]			= CKM_HSS;
-	t["CKM_LMS_KEY_PAIR_GEN"]	= CKM_LMS_KEY_PAIR_GEN;
-	t["CKM_LMS"]			= CKM_LMS;
 	t["CKM_XMSS_KEY_PAIR_GEN"]      = 0x00004034;
 	t["CKM_XMSSMT_KEY_PAIR_GEN"]    = 0x00004035;
 	t["CKM_XMSS"]                   = 0x00004036;
@@ -948,13 +945,11 @@ CK_RV SoftHSM::C_GetMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_
 		// LMS / HSS stateful hash-based signatures (G10)
 		// Standard PKCS#11 v3.2 §6.14 entries (HSS + keygen)
 		case CKM_HSS_KEY_PAIR_GEN:
-		case CKM_LMS_KEY_PAIR_GEN:  // vendor — single-level LMS
 			pInfo->ulMinKeySize = 0;
 			pInfo->ulMaxKeySize = 0;
 			pInfo->flags = CKF_GENERATE_KEY_PAIR;
 			break;
 		case CKM_HSS:
-		case CKM_LMS:  // vendor — single-level LMS sign/verify
 			pInfo->ulMinKeySize = 0;
 			pInfo->ulMaxKeySize = 0;
 			pInfo->flags = CKF_SIGN | CKF_VERIFY;

@@ -1149,7 +1149,7 @@ CK_RV SoftHSM::StatefulSignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMe
 	// Stateful signatures do NOT use AsymmetricAlgorithm base.
 	// Instead, we just track the exact mechanism and the raw hKey in the session.
 	AsymMech::Type mechanism = AsymMech::Unknown;
-	if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002) {
+	if (pMechanism->mechanism == CKM_HSS) {
 		mechanism = (AsymMech::Type)1000; // Custom flag for HSS
 	} else if (pMechanism->mechanism == CKM_XMSS) {
 		mechanism = (AsymMech::Type)1001; // Custom flag for XMSS
@@ -1174,7 +1174,7 @@ CK_RV SoftHSM::C_SignInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanis
 	
 	if (isMacMechanism(pMechanism))
 		return MacSignInit(hSession, pMechanism, hKey);
-	else if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002 ||
+	else if (pMechanism->mechanism == CKM_HSS ||
 	         pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036)
 		return StatefulSignInit(hSession, pMechanism, hKey);
 	else
@@ -2453,7 +2453,7 @@ CK_RV SoftHSM::StatefulVerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR p
 	session->setOpType(SESSION_OP_VERIFY);
 
 	AsymMech::Type mechanism = AsymMech::Unknown;
-	if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002) {
+	if (pMechanism->mechanism == CKM_HSS) {
 		mechanism = (AsymMech::Type)1000;
 	} else if (pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036) {
 		mechanism = (AsymMech::Type)1001;
@@ -2539,7 +2539,7 @@ CK_RV SoftHSM::C_VerifyInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechan
 
 	if (isMacMechanism(pMechanism))
 		return MacVerifyInit(hSession, pMechanism, hKey);
-	else if (pMechanism->mechanism == CKM_HSS || pMechanism->mechanism == 0x80000002 ||
+	else if (pMechanism->mechanism == CKM_HSS ||
 	         pMechanism->mechanism == CKM_XMSS || pMechanism->mechanism == 0x00004036 ||
 	         pMechanism->mechanism == 0x00004037)
 		return StatefulVerifyInit(hSession, pMechanism, hKey);

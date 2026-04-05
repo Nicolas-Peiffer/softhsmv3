@@ -12,14 +12,6 @@
 
 #include "pkcs11/pkcs11t.h"
 
-// ── Vendor: single-level LMS ──────────────────────────────────────────────────
-// (PKCS#11 v3.2 only defines HSS at the multi-level CKM_HSS_KEY_PAIR_GEN / CKM_HSS;
-//  CKM_LMS_KEY_PAIR_GEN and CKM_LMS are vendor extensions for single-level keygen.)
-
-#define CKM_LMS_KEY_PAIR_GEN   0x80000001UL  /* vendor */
-#define CKM_LMS                0x80000002UL  /* vendor */
-#define CKK_LMS                0x80000001UL  /* vendor — same value as CKM_LMS_KEY_PAIR_GEN; separate namespace */
-
 // ── Vendor: Keccak-256 (G11 — Ethereum address derivation) ───────────────────
 // Rust engine only. The C++ OpenSSL engine returns CKR_MECHANISM_INVALID for this.
 

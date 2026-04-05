@@ -5,8 +5,8 @@
 // Uses hbs-lms 0.1.1 (Fraunhofer IIS, RFC 8554 conformant).
 // Supports all SP 800-208 parameter sets: SHA-256 N32/N24 and SHAKE-256 N32/N24.
 //
-// LMS single-level: CKM_LMS_KEY_PAIR_GEN / CKM_LMS (vendor CKMs)
-// HSS multi-level: CKM_HSS_KEY_PAIR_GEN / CKM_HSS (standard PKCS#11 v3.2 §6.14)
+// All LMS/HSS operations use CKM_HSS_KEY_PAIR_GEN / CKM_HSS (PKCS#11 v3.2 §6.14).
+// Single-level LMS: CKM_HSS_KEY_PAIR_GEN with levels=1 in CK_HSS_KEY_PAIR_GEN_PARAMS.
 //
 // Parameter set values are IANA registry type IDs (RFC 8554 + SP 800-208):
 //   https://www.iana.org/assignments/leighton-micali-signatures/

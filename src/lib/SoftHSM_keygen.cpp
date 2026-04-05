@@ -297,9 +297,6 @@ CK_RV SoftHSM::C_GenerateKeyPair
 		case CKM_XMSS_KEY_PAIR_GEN:
 			keyType = CKK_XMSS;
 			break;
-		case 0x80000001: // CKM_LMS_KEY_PAIR_GEN
-			keyType = 0x80000001; // CKK_LMS
-			break;
 		default:
 			return CKR_MECHANISM_INVALID;
 	}
@@ -426,8 +423,7 @@ CK_RV SoftHSM::C_GenerateKeyPair
 	// The C wrapper factories (StatefulKeyPair) wrap the native hash-sigs and
 	// xmss-reference C libraries for cross-validation generation logic.
 	if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || 
-	    pMechanism->mechanism == 0x80000001 /* CKM_LMS_KEY_PAIR_GEN */ ||
-		pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN ||
+	    pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN ||
 		pMechanism->mechanism == 0x00004035 /* CKM_XMSSMT_KEY_PAIR_GEN */)
 	{
 		CK_RV rv = CKR_OK;
@@ -498,8 +494,8 @@ CK_RV SoftHSM::C_GenerateKeyPair
 			pub_len = XMSS_OID_LEN + params.pk_bytes;
 			priv_len = XMSS_OID_LEN + params.sk_bytes;
 		}
-		else if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
-			keyType = (pMechanism->mechanism == 0x80000001) ? 0x80000001 : 0x00000046UL;
+		else if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN) {
+			keyType = CKK_HSS;
 
 			// Parse HSS Params
 			unsigned hss_levels = 1;
@@ -627,7 +623,7 @@ CK_RV SoftHSM::C_GenerateKeyPair
 				if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x00004035) {
 					osPub->setAttribute(CKA_PARAMETER_SET_M, (unsigned long)parameterSet);
 				}
-				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
+				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN) {
 					osPub->setAttribute(ATTR_CKA_HSS_KEYS_REMAINING, (unsigned long)remainingSigs);
 				}
 				osPub->commitTransaction();
@@ -639,7 +635,7 @@ CK_RV SoftHSM::C_GenerateKeyPair
 				if (pMechanism->mechanism == CKM_XMSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x00004035) {
 					osPriv->setAttribute(CKA_PARAMETER_SET_M, (unsigned long)parameterSet);
 				}
-				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN || pMechanism->mechanism == 0x80000001) {
+				if (pMechanism->mechanism == CKM_HSS_KEY_PAIR_GEN) {
 					osPriv->setAttribute(ATTR_CKA_HSS_KEYS_REMAINING, (unsigned long)remainingSigs);
 				}
 				osPriv->commitTransaction();

@@ -1209,74 +1209,8 @@ pub fn C_GenerateKeyPair(
                 CKR_OK
             }
 
-            // ── LMS single-level keygen (vendor CKM_LMS_KEY_PAIR_GEN) ─────────
-            CKM_LMS_KEY_PAIR_GEN => {
-                let lms_param = get_attr_ulong(
-                    p_public_key_template,
-                    ul_public_key_attribute_count,
-                    CKA_LMS_PARAM_SET,
-                )
-                .unwrap_or(CKP_LMS_SHA256_M32_H5);
-                let lmots_param = get_attr_ulong(
-                    p_public_key_template,
-                    ul_public_key_attribute_count,
-                    CKA_LMOTS_PARAM_SET,
-                )
-                .unwrap_or(CKP_LMOTS_SHA256_N32_W4);
-                let (pub_bytes, priv_bytes) =
-                    match crate::crypto::lms::lms_keygen(lms_param, lmots_param) {
-                        Ok(pair) => pair,
-                        Err(_) => return CKR_FUNCTION_FAILED,
-                    };
-                let max_leaves = crate::crypto::lms::lms_param_max_leaves(lms_param)
-                    .unwrap_or(1u64 << 5);
-
-                let mut pub_attrs = HashMap::new();
-                let mut prv_attrs = HashMap::new();
-                // Public key attributes
-                store_ulong(&mut pub_attrs, CKA_CLASS, CKO_PUBLIC_KEY);
-                store_ulong(&mut pub_attrs, CKA_KEY_TYPE, CKK_LMS);
-                store_ulong(&mut pub_attrs, CKA_LMS_PARAM_SET, lms_param);
-                store_ulong(&mut pub_attrs, CKA_LMOTS_PARAM_SET, lmots_param);
-                store_ulong(&mut pub_attrs, CKA_KEY_GEN_MECHANISM, CKM_LMS_KEY_PAIR_GEN);
-                store_bool(&mut pub_attrs, CKA_TOKEN, false);
-                store_bool(&mut pub_attrs, CKA_PRIVATE, false);
-                store_bool(&mut pub_attrs, CKA_VERIFY, true);
-                store_bool(&mut pub_attrs, CKA_LOCAL, true);
-                pub_attrs.insert(CKA_VALUE, pub_bytes);
-                // Private key attributes
-                store_ulong(&mut prv_attrs, CKA_CLASS, CKO_PRIVATE_KEY);
-                store_ulong(&mut prv_attrs, CKA_KEY_TYPE, CKK_LMS);
-                store_ulong(&mut prv_attrs, CKA_LMS_PARAM_SET, lms_param);
-                store_ulong(&mut prv_attrs, CKA_LMOTS_PARAM_SET, lmots_param);
-                store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_LMS_KEY_PAIR_GEN);
-                store_bool(&mut prv_attrs, CKA_TOKEN, false);
-                store_bool(&mut prv_attrs, CKA_PRIVATE, true);
-                store_bool(&mut prv_attrs, CKA_SENSITIVE, true);
-                store_bool(&mut prv_attrs, CKA_EXTRACTABLE, false);
-                store_bool(&mut prv_attrs, CKA_SIGN, true);
-                store_bool(&mut prv_attrs, CKA_LOCAL, true);
-                prv_attrs.insert(CKA_STATEFUL_KEY_STATE, priv_bytes);
-                prv_attrs.insert(CKA_LEAF_INDEX, 0u64.to_le_bytes().to_vec());
-                // Max leaves stored as CKA_HSS_KEYS_REMAINING (PKCS#11 v3.2)
-                store_ulong(&mut pub_attrs, CKA_HSS_KEYS_REMAINING, max_leaves as u32);
-                store_ulong(&mut prv_attrs, CKA_HSS_KEYS_REMAINING, max_leaves as u32);
-                absorb_template_attrs(
-                    &mut pub_attrs,
-                    p_public_key_template,
-                    ul_public_key_attribute_count,
-                );
-                absorb_template_attrs(
-                    &mut prv_attrs,
-                    p_private_key_template,
-                    ul_private_key_attribute_count,
-                );
-                *ph_public_key = allocate_handle(pub_attrs);
-                *ph_private_key = allocate_handle(prv_attrs);
-                CKR_OK
-            }
-
-            // ── HSS multi-level keygen (PKCS#11 v3.2 §6.14 CKM_HSS_KEY_PAIR_GEN) ─
+            // ── HSS keygen (PKCS#11 v3.2 §6.14 CKM_HSS_KEY_PAIR_GEN) ─────────
+            // Single-level LMS: use levels=1 in CK_HSS_KEY_PAIR_GEN_PARAMS.
             CKM_HSS_KEY_PAIR_GEN => {
                 // CK_MECHANISM layout (WASM32): mechType(4) + pParameter(4) + ulParameterLen(4)
                 // CK_HSS_KEY_PAIR_GEN_PARAMS: ulLevels(4) + ulLmsParamSet[8](32) + ulLmotsParamSet[8](32) = 68B
@@ -1890,7 +1824,7 @@ pub fn C_Sign(
         }
 
         // ── LMS / HSS stateful sign — separate path (uses CKA_STATEFUL_KEY_STATE) ───
-        if mech == CKM_LMS || mech == CKM_HSS || mech == CKM_XMSS {
+        if mech == CKM_HSS || mech == CKM_XMSS {
             let priv_bytes = match get_object_attr_bytes(hkey, CKA_STATEFUL_KEY_STATE) {
                 Some(v) => v,
                 None => return CKR_KEY_TYPE_INCONSISTENT,
@@ -1904,14 +1838,7 @@ pub fn C_Sign(
                 Ok(())
             };
 
-            let sign_result = if mech == CKM_LMS {
-                let lms_param = get_object_attr_u32(hkey, CKA_LMS_PARAM_SET)
-                    .unwrap_or(CKP_LMS_SHA256_M32_H5);
-                let max_leaves = crate::crypto::lms::lms_param_max_leaves(lms_param)
-                    .unwrap_or(1u64 << 5);
-                let leaf_index = get_object_attr_u64(hkey, CKA_LEAF_INDEX).unwrap_or(0);
-                crate::crypto::lms::lms_sign(leaf_index, max_leaves, &priv_bytes, msg, &mut update_fn)
-            } else if mech == CKM_XMSS {
+            let sign_result = if mech == CKM_XMSS {
                 let xmss_param = get_object_attr_u32(hkey, CKA_XMSS_PARAM_SET)
                     .unwrap_or(CKP_XMSS_SHA2_10_256);
                 match crate::crypto::xmss_bridge::xmss_sign(xmss_param, &priv_bytes, msg) {
@@ -1931,7 +1858,7 @@ pub fn C_Sign(
                     if let Some(new_priv_bytes) = new_state {
                         set_object_attr_bytes(hkey, CKA_STATEFUL_KEY_STATE, new_priv_bytes);
                         // Increment leaf index for LMS (HSS manages this internally)
-                        if mech == CKM_LMS {
+                        if mech == CKM_HSS {
                             let old_idx = get_object_attr_u64(hkey, CKA_LEAF_INDEX).unwrap_or(0);
                             set_object_attr_bytes(
                                 hkey,
@@ -2092,16 +2019,14 @@ pub fn C_Verify(
 
     unsafe {
         // ── LMS / HSS stateful verify — separate path (public key in CKA_VALUE) ───
-        if mech == CKM_LMS || mech == CKM_HSS || mech == CKM_XMSS {
+        if mech == CKM_HSS || mech == CKM_XMSS {
             let pub_bytes = match get_object_value(hkey) {
                 Some(v) => v,
                 None => return CKR_KEY_TYPE_INCONSISTENT,
             };
             let msg = std::slice::from_raw_parts(p_data, ul_data_len as usize);
             let sig_bytes = std::slice::from_raw_parts(p_signature, ul_signature_len as usize);
-            let ok = if mech == CKM_LMS {
-                crate::crypto::lms::lms_verify(&pub_bytes, msg, sig_bytes)
-            } else if mech == CKM_XMSS {
+            let ok = if mech == CKM_XMSS {
                 let xmss_param = get_object_attr_u32(hkey, CKA_XMSS_PARAM_SET)
                     .unwrap_or(CKP_XMSS_SHA2_10_256);
                 crate::crypto::xmss_bridge::xmss_verify(xmss_param, &pub_bytes, msg, sig_bytes)
