@@ -10,6 +10,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.8] — 2026-04-06
+
+### Added
+
+- **`CKA_XMSS_KEYS_REMAINING` (vendor attr 0x80000106)**: Separate from `CKA_HSS_KEYS_REMAINING`;
+  tracks remaining XMSS signature operations as a `u32` LE value per PKCS#11 v3.2 §6.15.
+- **`xmss_param_max_sigs()` / `xmss_keys_remaining()`**: Compute XMSS signature capacity (2^H)
+  and derive remaining count by reading the leaf index directly from the serialised key blob
+  (big-endian at offset 4 after OID), tolerating crate-internal leaf skipping.
+- **`CKR_ATTRIBUTE_TYPE_INVALID` (0x00000012)**: Exported constant per PKCS#11 v3.2 §11.7.
+
+### Fixed
+
+- **`C_GetSlotList` token-present filter**: Now correctly filters on `token.initialized` when
+  `tokenPresent = CK_TRUE` (was always returning all slots regardless of flag).
+- **`C_GetAttributeValue` PKCS#11 v3.2 §5.7.5 compliance**:
+  - Public keys (`CKO_PUBLIC_KEY`) are always fully readable — `CKA_SENSITIVE` / `CKA_EXTRACTABLE`
+    restrictions now apply only to private and secret keys.
+  - Absent attributes now set `ulValueLen = CK_UNAVAILABLE_INFORMATION` and the function returns
+    `CKR_ATTRIBUTE_TYPE_INVALID` as required (was silently returning `CKR_OK`).
+- **`C_Sign` XMSS state tracking**: Updates `CKA_XMSS_KEYS_REMAINING` by re-reading the leaf
+  index from the updated key blob after each sign — avoids off-by-one from simple decrement.
+- **`C_Sign` HSS state update**: `new_state` clone now stored correctly; leaf index and
+  keys-remaining tracked in separate HSS vs XMSS code paths.
+- **HSS keygen `CKA_HSS_KEYS_REMAINING`**: Computes actual capacity (∏ 2^H_i across levels,
+  capped at `u32::MAX`) instead of hardcoded placeholder value of 32.
+- **XMSS keygen `CKA_XMSS_KEYS_REMAINING`**: Stored under the new vendor attribute
+  `CKA_XMSS_KEYS_REMAINING` (0x80000106) — was incorrectly aliased to `CKA_HSS_KEYS_REMAINING`.
+- **`hss_sign()` hash-family dispatch**: Now takes `lms_param` and routes to the correct
+  `hbs-lms` generic (`Sha256_256 / Sha256_192 / Shake256_256 / Shake256_192`) — previously
+  always used `Sha256_256`, causing silent `CKR_KEY_EXHAUSTED` on M24/SHAKE parameter sets.
+- **`lms_single_sig_len()` full SP 800-208 coverage**: Derives `n` and `p` from IANA type-ID
+  ranges — correct for all 20 LMS × 16 LMOTS combinations (SHA-256 N24, SHAKE-256 N32/N24
+  were previously returning wrong lengths).
+- **`hss_sig_len()` LMS public key size**: Corrected 52 → 56 bytes per RFC 8554 §5.4
+  (`lms_type(4) + lmots_type(4) + I(16) + T[1](32)`).
+- **`get_sig_len()` XMSS support**: Added `CKM_XMSS` case; removed duplicate unreachable
+  `CKM_HSS` match arm.
+- **`C_GetMechanismInfo` ML-KEM key sizes**: Corrected from security-bit values (128/256) to
+  actual encapsulation key byte lengths (800/1568 per FIPS 203).
+
+---
+
 ## [0.4.7] — 2026-04-05
 
 ### Added
