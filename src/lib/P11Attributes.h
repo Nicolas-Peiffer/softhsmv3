@@ -1228,7 +1228,7 @@ class P11AttrParameterSet : public P11Attribute
 {
 public:
 	// Constructor
-	P11AttrParameterSet(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_PARAMETER_SET; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+	P11AttrParameterSet(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_PARAMETER_SET; size = sizeof(CK_ULONG); checks = inchecks; }
 
 protected:
 	// Set the default value of the attribute
@@ -1284,7 +1284,7 @@ protected:
 class P11AttrHssLevels : public P11Attribute
 {
 public:
-	P11AttrHssLevels(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LEVELS; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+	P11AttrHssLevels(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LEVELS; size = sizeof(CK_ULONG); checks = inchecks; }
 
 protected:
 	virtual bool setDefault();
@@ -1299,7 +1299,7 @@ protected:
 class P11AttrHssLmsType : public P11Attribute
 {
 public:
-	P11AttrHssLmsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPE; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+	P11AttrHssLmsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPE; size = sizeof(CK_ULONG); checks = inchecks; }
 
 protected:
 	virtual bool setDefault();
@@ -1314,7 +1314,7 @@ protected:
 class P11AttrHssLmotsType : public P11Attribute
 {
 public:
-	P11AttrHssLmotsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPE; size = sizeof(CK_ULONG); checks = ck1|inchecks; }
+	P11AttrHssLmotsType(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPE; size = sizeof(CK_ULONG); checks = inchecks; }
 
 protected:
 	virtual bool setDefault();
@@ -1329,7 +1329,7 @@ protected:
 class P11AttrHssLmsTypes : public P11Attribute
 {
 public:
-	P11AttrHssLmsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPES; checks = ck1|inchecks; }
+	P11AttrHssLmsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMS_TYPES; checks = inchecks; }
 
 protected:
 	virtual bool setDefault();
@@ -1344,7 +1344,7 @@ protected:
 class P11AttrHssLmotsTypes : public P11Attribute
 {
 public:
-	P11AttrHssLmotsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPES; checks = ck1|inchecks; }
+	P11AttrHssLmotsTypes(OSObject* inobject, CK_ULONG inchecks = 0) : P11Attribute(inobject) { type = CKA_HSS_LMOTS_TYPES; checks = inchecks; }
 
 protected:
 	virtual bool setDefault();

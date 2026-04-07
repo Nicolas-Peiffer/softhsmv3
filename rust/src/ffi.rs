@@ -430,7 +430,7 @@ pub fn C_GetMechanismInfo(_slot_id: u32, mech_type: u32, p_info: *mut u8) -> u32
         CKM_KMAC_128 | CKM_KMAC_256 => (16, 64, 0x00000800 | 0x00002000),
         CKM_GENERIC_SECRET_KEY_GEN => (1, 512, 0x00008000),
         CKM_EC_KEY_PAIR_GEN => (256, 384, 0x00010000),
-        CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 => (256, 384, 0x00000800 | 0x00002000),
+        CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512 => (256, 384, 0x00000800 | 0x00002000),
         CKM_ECDH1_DERIVE | CKM_ECDH1_COFACTOR_DERIVE => (256, 384, 0x00080000),
         CKM_EC_EDWARDS_KEY_PAIR_GEN => (255, 255, 0x00010000),
         CKM_EDDSA => (255, 255, 0x00000800 | 0x00002000),
@@ -1976,8 +1976,8 @@ pub fn C_Sign(
             | CKM_SHA3_512_HMAC => sign_hmac(eff_mech, &sk_bytes, eff_msg),
             CKM_KMAC_128 | CKM_KMAC_256 => sign_kmac(eff_mech, &sk_bytes, eff_msg),
             CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => sign_rsa(eff_mech, &sk_bytes, eff_msg),
-            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256
-            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
+            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512 | CKM_ECDSA_SHA3_224
+            | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
                 sign_ecdsa(eff_mech, ps, &sk_bytes, eff_msg)
             }
             CKM_EDDSA => sign_eddsa(&sk_bytes, eff_msg),
@@ -2139,8 +2139,8 @@ pub fn C_Verify(
                 }
             }
             // PKCS#11 v3.2: EC public key material is in CKA_EC_POINT.
-            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256
-            | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => match &ec_point_bytes {
+            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512 | CKM_ECDSA_SHA3_224
+            | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => match &ec_point_bytes {
                 Some(b) => verify_ecdsa(eff_mech, ps, b, eff_msg, sig_bytes),
                 None => Err(CKR_KEY_TYPE_INCONSISTENT),
             },
@@ -2241,6 +2241,127 @@ pub fn C_MessageVerifyFinal(h_session: u32) -> u32 {
         s.borrow_mut().remove(&h_session);
     });
     CKR_OK
+}
+
+// ── Signature-only Verification (PKCS#11 v3.2 Pre-bound Verify) ─────────────
+
+#[wasm_bindgen(js_name = _C_VerifySignatureInit)]
+pub fn C_VerifySignatureInit(
+    h_session: u32,
+    p_mechanism: *mut u8,
+    h_key: u32,
+    p_signature: *mut u8,
+    ul_signature_len: u32,
+) -> u32 {
+    unsafe {
+        if p_mechanism.is_null() || p_signature.is_null() {
+            return CKR_ARGUMENTS_BAD;
+        }
+        let can_verify = OBJECTS.with(|o| {
+            o.borrow()
+                .get(&h_key)
+                .map(|attrs| read_bool_attr(attrs, CKA_VERIFY))
+                .unwrap_or(false)
+        });
+        if !can_verify {
+            return CKR_KEY_FUNCTION_NOT_PERMITTED;
+        }
+        let mut mech_type = *(p_mechanism as *const u32);
+        if mech_type == CKM_EDDSA {
+            let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u8;
+            let ul_param_len = *(p_mechanism.add(8) as *const u32);
+            if !p_param.is_null() && ul_param_len >= 4 {
+                let ph_flag = *(p_param as *const u32);
+                if ph_flag != 0 {
+                    mech_type = CKM_EDDSA_PH;
+                }
+            }
+        }
+        let (slh_ctx, slh_det) = if mech_type == CKM_SLH_DSA {
+            parse_slh_dsa_ctx(p_mechanism)
+        } else {
+            (Vec::new(), false)
+        };
+        let signature = std::slice::from_raw_parts(p_signature, ul_signature_len as usize).to_vec();
+        
+        VERIFY_SIG_STATE.with(|s| {
+            s.borrow_mut().insert(h_session, VerifySigCtx {
+                mech_type,
+                key_handle: h_key,
+                signature,
+                msg_acc: Vec::new(),
+                slh_ctx,
+                slh_det,
+            });
+        });
+    }
+    CKR_OK
+}
+
+#[wasm_bindgen(js_name = _C_VerifySignature)]
+pub fn C_VerifySignature(
+    h_session: u32,
+    p_data: *mut u8,
+    ul_data_len: u32,
+) -> u32 {
+    let state = VERIFY_SIG_STATE.with(|s| s.borrow_mut().remove(&h_session));
+    if let Some(ctx) = state {
+        VERIFY_STATE.with(|s| {
+            s.borrow_mut().insert(h_session, (ctx.mech_type, ctx.key_handle, ctx.slh_ctx, ctx.slh_det));
+        });
+        let mut sig_clone = ctx.signature.clone();
+        C_Verify(
+            h_session,
+            p_data,
+            ul_data_len,
+            sig_clone.as_mut_ptr(),
+            sig_clone.len() as u32,
+        )
+    } else {
+         CKR_OPERATION_NOT_INITIALIZED
+    }
+}
+
+#[wasm_bindgen(js_name = _C_VerifySignatureUpdate)]
+pub fn C_VerifySignatureUpdate(
+    h_session: u32,
+    p_part: *mut u8,
+    ul_part_len: u32,
+) -> u32 {
+    let mut ok = false;
+    VERIFY_SIG_STATE.with(|s| {
+        if let Some(ctx) = s.borrow_mut().get_mut(&h_session) {
+            if ul_part_len > 0 {
+                unsafe {
+                    let part = std::slice::from_raw_parts(p_part, ul_part_len as usize);
+                    ctx.msg_acc.extend_from_slice(part);
+                }
+            }
+            ok = true;
+        }
+    });
+    if ok { CKR_OK } else { CKR_OPERATION_NOT_INITIALIZED }
+}
+
+#[wasm_bindgen(js_name = _C_VerifySignatureFinal)]
+pub fn C_VerifySignatureFinal(h_session: u32) -> u32 {
+    let state = VERIFY_SIG_STATE.with(|s| s.borrow_mut().remove(&h_session));
+    if let Some(ctx) = state {
+        VERIFY_STATE.with(|s| {
+            s.borrow_mut().insert(h_session, (ctx.mech_type, ctx.key_handle, ctx.slh_ctx, ctx.slh_det));
+        });
+        let mut data = ctx.msg_acc.clone();
+        let mut sig = ctx.signature.clone();
+        C_Verify(
+            h_session,
+            if data.is_empty() { 4 as *mut u8 } else { data.as_mut_ptr() },
+            data.len() as u32,
+            sig.as_mut_ptr(),
+            sig.len() as u32,
+        )
+    } else {
+        CKR_OPERATION_NOT_INITIALIZED
+    }
 }
 
 // ── Encrypt/Decrypt ─────────────────────────────────────────────────────────
@@ -4084,6 +4205,46 @@ pub fn C_DecryptUpdate(
     CKR_FUNCTION_NOT_SUPPORTED
 }
 
+// ── PKCS#11 v3.2 Asynchronous and Session Flag Stubs ────────────────────────
+
+#[wasm_bindgen(js_name = _C_GetSessionValidationFlags)]
+pub fn C_GetSessionValidationFlags(
+    _h_session: u32,
+    _type: u32,
+    _p_flags: *mut u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
+
+#[wasm_bindgen(js_name = _C_AsyncComplete)]
+pub fn C_AsyncComplete(
+    _h_session: u32,
+    _p_function_name: *mut u8,
+    _p_result: *mut u8,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
+
+#[wasm_bindgen(js_name = _C_AsyncGetID)]
+pub fn C_AsyncGetID(
+    _h_session: u32,
+    _p_function_name: *mut u8,
+    _pul_id: *mut u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
+
+#[wasm_bindgen(js_name = _C_AsyncJoin)]
+pub fn C_AsyncJoin(
+    _h_session: u32,
+    _p_function_name: *mut u8,
+    _ul_id: u32,
+    _p_data: *mut u8,
+    _ul_data_len: u32,
+) -> u32 {
+    CKR_FUNCTION_NOT_SUPPORTED
+}
+
 #[wasm_bindgen(js_name = _C_DecryptFinal)]
 pub fn C_DecryptFinal(_h_session: u32, _p_last_part: *mut u8, _pul_last_part_len: *mut u32) -> u32 {
     CKR_FUNCTION_NOT_SUPPORTED
@@ -4218,6 +4379,500 @@ pub fn C_SetOperationState(
 pub fn C_SeedRandom(_h_session: u32, _p_seed: *mut u8, _ul_seed_len: u32) -> u32 {
     // WASM getrandom is OS-backed; external seeding is not supported
     CKR_FUNCTION_NOT_SUPPORTED
+}
+
+// ============================================================================
+// PKCS#11 v3.0 Message Encryption
+// ============================================================================
+
+fn parse_gcm_msg_params(p: *mut u8) -> Result<(Vec<u8>, *mut u8, u32), u32> {
+    if p.is_null() { return Err(CKR_ARGUMENTS_BAD); }
+    unsafe {
+        let p_iv = *(p as *const u32) as usize as *mut u8;
+        let ul_iv_len = *(p.add(4) as *const u32);
+        let iv_gen = *(p.add(12) as *const u32);
+        let p_tag = *(p.add(16) as *const u32) as usize as *mut u8;
+        let ul_tag_bits = *(p.add(20) as *const u32);
+
+        if p_iv.is_null() || ul_iv_len == 0 { return Err(CKR_MECHANISM_PARAM_INVALID); }
+        if p_tag.is_null() || ul_tag_bits == 0 || ul_tag_bits > 128 || ul_tag_bits % 8 != 0 {
+            return Err(CKR_MECHANISM_PARAM_INVALID);
+        }
+
+        if iv_gen != 0 {
+            let mut rand_iv = vec![0u8; ul_iv_len as usize];
+            if getrandom::getrandom(&mut rand_iv).is_err() {
+                return Err(CKR_GENERAL_ERROR);
+            }
+            std::ptr::copy_nonoverlapping(rand_iv.as_ptr(), p_iv, ul_iv_len as usize);
+        }
+
+        let iv = std::slice::from_raw_parts(p_iv, ul_iv_len as usize).to_vec();
+        Ok((iv, p_tag, ul_tag_bits))
+    }
+}
+
+pub fn msg_encrypt_init_internal(h_session: u32, p_mechanism: *mut u8, h_key: u32, is_encrypt: bool) -> u32 {
+    unsafe {
+        if p_mechanism.is_null() {
+            return CKR_ARGUMENTS_BAD;
+        }
+        let mech_type = *(p_mechanism as *const u32);
+        if mech_type != CKM_AES_GCM {
+            return CKR_MECHANISM_INVALID;
+        }
+        
+        let can_use = OBJECTS.with(|o| {
+            o.borrow()
+                .get(&h_key)
+                .map(|attrs| read_bool_attr(attrs, if is_encrypt { CKA_ENCRYPT } else { CKA_DECRYPT }))
+                .unwrap_or(false)
+        });
+        if !can_use {
+            return CKR_KEY_FUNCTION_NOT_PERMITTED;
+        }
+
+        let key_bytes = match get_object_value(h_key) {
+            Some(v) => v,
+            None => return CKR_KEY_TYPE_INCONSISTENT,
+        };
+        
+        if key_bytes.len() != 16 && key_bytes.len() != 32 {
+            return CKR_KEY_SIZE_RANGE;
+        }
+
+        let ctx = MsgAeadCtx {
+            key: key_bytes,
+            in_message: false,
+            iv: Vec::new(),
+            aad: Vec::new(),
+            tag_bits: 0,
+            payload_acc: Vec::new(),
+        };
+
+        if is_encrypt {
+            MESSAGE_ENCRYPT_STATE.with(|s| s.borrow_mut().insert(h_session, ctx));
+        } else {
+            MESSAGE_DECRYPT_STATE.with(|s| s.borrow_mut().insert(h_session, ctx));
+        }
+
+        CKR_OK
+    }
+}
+
+pub fn aes_gcm_exec(
+    key: &[u8],
+    iv: &[u8],
+    aad: &[u8],
+    payload: &[u8],
+    is_encrypt: bool,
+    p_tag: *mut u8,
+    tag_bits: u32,
+) -> Result<Vec<u8>, u32> {
+    use aes_gcm::aead::generic_array::GenericArray;
+    use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
+
+    let tag_bytes = (tag_bits / 8) as usize;
+    let nonce = GenericArray::from_slice(iv);
+    let payload_aead = aes_gcm::aead::Payload {
+        msg: payload,
+        aad: aad,
+    };
+
+    if key.len() == 16 {
+        let cipher = Aes128Gcm::new(GenericArray::from_slice(key));
+        if is_encrypt {
+            match cipher.encrypt(nonce, payload_aead) {
+                Ok(out) => {
+                    if out.len() < tag_bytes { return Err(CKR_GENERAL_ERROR); }
+                    let ct_len = out.len() - 16;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(out[ct_len..ct_len + tag_bytes].as_ptr(), p_tag, tag_bytes);
+                    }
+                    Ok(out[0..ct_len].to_vec())
+                }
+                Err(_) => Err(CKR_GENERAL_ERROR),
+            }
+        } else {
+            let mut combined = payload.to_vec();
+            if tag_bytes > 0 {
+                unsafe {
+                    let tag_slice = std::slice::from_raw_parts(p_tag, tag_bytes);
+                    combined.extend_from_slice(tag_slice);
+                }
+            }
+            let dec_payload = aes_gcm::aead::Payload {
+                msg: &combined,
+                aad: aad,
+            };
+            match cipher.decrypt(nonce, dec_payload) {
+                Ok(plain) => Ok(plain),
+                Err(_) => Err(CKR_ENCRYPTED_DATA_INVALID),
+            }
+        }
+    } else if key.len() == 32 {
+        let cipher = Aes256Gcm::new(GenericArray::from_slice(key));
+        if is_encrypt {
+            match cipher.encrypt(nonce, payload_aead) {
+                Ok(out) => {
+                    if out.len() < tag_bytes { return Err(CKR_GENERAL_ERROR); }
+                    let ct_len = out.len() - 16;
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(out[ct_len..ct_len + tag_bytes].as_ptr(), p_tag, tag_bytes);
+                    }
+                    Ok(out[0..ct_len].to_vec())
+                }
+                Err(_) => Err(CKR_GENERAL_ERROR),
+            }
+        } else {
+            let mut combined = payload.to_vec();
+            if tag_bytes > 0 {
+                unsafe {
+                    let tag_slice = std::slice::from_raw_parts(p_tag, tag_bytes);
+                    combined.extend_from_slice(tag_slice);
+                }
+            }
+            let dec_payload = aes_gcm::aead::Payload {
+                msg: &combined,
+                aad: aad,
+            };
+            match cipher.decrypt(nonce, dec_payload) {
+                Ok(plain) => Ok(plain),
+                Err(_) => Err(CKR_ENCRYPTED_DATA_INVALID),
+            }
+        }
+    } else {
+        Err(CKR_KEY_SIZE_RANGE)
+    }
+}
+
+#[wasm_bindgen(js_name = _C_MessageEncryptInit)]
+pub fn C_MessageEncryptInit(h_session: u32, p_mechanism: *mut u8, h_key: u32) -> u32 {
+    msg_encrypt_init_internal(h_session, p_mechanism, h_key, true)
+}
+
+#[wasm_bindgen(js_name = _C_EncryptMessage)]
+pub fn C_EncryptMessage(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_associated_data: *const u8,
+    ul_associated_data_len: u32,
+    p_plaintext: *const u8,
+    ul_plaintext_len: u32,
+    p_ciphertext: *mut u8,
+    pul_ciphertext_len: *mut u32,
+) -> u32 {
+    let ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if ctx.in_message { return CKR_OPERATION_ACTIVE; }
+
+    unsafe {
+        if p_ciphertext.is_null() {
+            *pul_ciphertext_len = ul_plaintext_len;
+            return CKR_OK;
+        }
+        if *pul_ciphertext_len < ul_plaintext_len {
+            *pul_ciphertext_len = ul_plaintext_len;
+            return CKR_BUFFER_TOO_SMALL;
+        }
+
+        let (iv, p_tag, tag_bits) = match parse_gcm_msg_params(p_parameter) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let aad = std::slice::from_raw_parts(p_associated_data, ul_associated_data_len as usize);
+        let plain = std::slice::from_raw_parts(p_plaintext, ul_plaintext_len as usize);
+
+        match aes_gcm_exec(&ctx.key, &iv, aad, plain, true, p_tag, tag_bits) {
+            Ok(ct) => {
+                std::ptr::copy_nonoverlapping(ct.as_ptr(), p_ciphertext, ct.len());
+                *pul_ciphertext_len = ct.len() as u32;
+                CKR_OK
+            }
+            Err(e) => e,
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = _C_EncryptMessageBegin)]
+pub fn C_EncryptMessageBegin(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_associated_data: *const u8,
+    ul_associated_data_len: u32,
+) -> u32 {
+    let mut state_map_guard = MESSAGE_ENCRYPT_STATE.with(|s| s.borrow_mut().clone());
+    let ctx = match state_map_guard.get_mut(&h_session) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if ctx.in_message { return CKR_OPERATION_ACTIVE; }
+
+    unsafe {
+        let (iv, _p_tag, tag_bits) = match parse_gcm_msg_params(p_parameter) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let aad = std::slice::from_raw_parts(p_associated_data, ul_associated_data_len as usize).to_vec();
+
+        MESSAGE_ENCRYPT_STATE.with(|s| {
+            let mut store = s.borrow_mut();
+            if let Some(c) = store.get_mut(&h_session) {
+                c.in_message = true;
+                c.iv = iv;
+                c.aad = aad;
+                c.tag_bits = tag_bits;
+                c.payload_acc.clear();
+            }
+        });
+    }
+    CKR_OK
+}
+
+#[wasm_bindgen(js_name = _C_EncryptMessageNext)]
+pub fn C_EncryptMessageNext(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_plaintext_part: *const u8,
+    ul_plaintext_part_len: u32,
+    p_ciphertext_part: *mut u8,
+    pul_ciphertext_part_len: *mut u32,
+    flags: u32,
+) -> u32 {
+    let ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if !ctx.in_message { return CKR_OPERATION_NOT_INITIALIZED; }
+
+    unsafe {
+        if p_ciphertext_part.is_null() {
+            *pul_ciphertext_part_len = ul_plaintext_part_len;
+            return CKR_OK;
+        }
+        if *pul_ciphertext_part_len < ul_plaintext_part_len {
+            *pul_ciphertext_part_len = ul_plaintext_part_len;
+            return CKR_BUFFER_TOO_SMALL;
+        }
+
+        MESSAGE_ENCRYPT_STATE.with(|s| {
+            if let Some(c) = s.borrow_mut().get_mut(&h_session) {
+                let plain_chunk = std::slice::from_raw_parts(p_plaintext_part, ul_plaintext_part_len as usize);
+                c.payload_acc.extend_from_slice(plain_chunk);
+            }
+        });
+
+        if (flags & 0x00000001) != 0 /* CKF_END_OF_MESSAGE */ {
+            let final_ctx = MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let p_tag = if p_parameter.is_null() {
+                return CKR_ARGUMENTS_BAD;
+            } else {
+                *(p_parameter.add(16) as *const u32) as usize as *mut u8
+            };
+
+            match aes_gcm_exec(&final_ctx.key, &final_ctx.iv, &final_ctx.aad, &final_ctx.payload_acc, true, p_tag, final_ctx.tag_bits) {
+                Ok(full_ct) => {
+                    let chunk_start = full_ct.len() - ul_plaintext_part_len as usize;
+                    std::ptr::copy_nonoverlapping(full_ct[chunk_start..].as_ptr(), p_ciphertext_part, ul_plaintext_part_len as usize);
+                    *pul_ciphertext_part_len = ul_plaintext_part_len;
+                    
+                    MESSAGE_ENCRYPT_STATE.with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    CKR_OK
+                }
+                Err(e) => {
+                    MESSAGE_ENCRYPT_STATE.with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    e
+                }
+            }
+        } else {
+            let intermediate_ctx = MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
+            match aes_gcm_exec(&intermediate_ctx.key, &intermediate_ctx.iv, &intermediate_ctx.aad, &intermediate_ctx.payload_acc, true, fake_tag.as_mut_ptr(), intermediate_ctx.tag_bits) {
+                Ok(full_ct) => {
+                    let chunk_start = full_ct.len() - ul_plaintext_part_len as usize;
+                    std::ptr::copy_nonoverlapping(full_ct[chunk_start..].as_ptr(), p_ciphertext_part, ul_plaintext_part_len as usize);
+                    *pul_ciphertext_part_len = ul_plaintext_part_len;
+                    CKR_OK
+                }
+                Err(e) => e,
+            }
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = _C_MessageEncryptFinal)]
+pub fn C_MessageEncryptFinal(h_session: u32) -> u32 {
+    MESSAGE_ENCRYPT_STATE.with(|s| s.borrow_mut().remove(&h_session));
+    CKR_OK
+}
+
+#[wasm_bindgen(js_name = _C_MessageDecryptInit)]
+pub fn C_MessageDecryptInit(h_session: u32, p_mechanism: *mut u8, h_key: u32) -> u32 {
+    msg_encrypt_init_internal(h_session, p_mechanism, h_key, false)
+}
+
+#[wasm_bindgen(js_name = _C_DecryptMessage)]
+pub fn C_DecryptMessage(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_associated_data: *const u8,
+    ul_associated_data_len: u32,
+    p_ciphertext: *const u8,
+    ul_ciphertext_len: u32,
+    p_plaintext: *mut u8,
+    pul_plaintext_len: *mut u32,
+) -> u32 {
+    let ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if ctx.in_message { return CKR_OPERATION_ACTIVE; }
+
+    unsafe {
+        if p_plaintext.is_null() {
+            *pul_plaintext_len = ul_ciphertext_len;
+            return CKR_OK;
+        }
+        if *pul_plaintext_len < ul_ciphertext_len {
+            *pul_plaintext_len = ul_ciphertext_len;
+            return CKR_BUFFER_TOO_SMALL;
+        }
+
+        let (iv, p_tag, tag_bits) = match parse_gcm_msg_params(p_parameter) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let aad = std::slice::from_raw_parts(p_associated_data, ul_associated_data_len as usize);
+        let ct = std::slice::from_raw_parts(p_ciphertext, ul_ciphertext_len as usize);
+
+        match aes_gcm_exec(&ctx.key, &iv, aad, ct, false, p_tag, tag_bits) {
+            Ok(plain) => {
+                std::ptr::copy_nonoverlapping(plain.as_ptr(), p_plaintext, plain.len());
+                *pul_plaintext_len = plain.len() as u32;
+                CKR_OK
+            }
+            Err(e) => e,
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = _C_DecryptMessageBegin)]
+pub fn C_DecryptMessageBegin(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_associated_data: *const u8,
+    ul_associated_data_len: u32,
+) -> u32 {
+    let mut state_map_guard = MESSAGE_DECRYPT_STATE.with(|s| s.borrow_mut().clone());
+    let ctx = match state_map_guard.get_mut(&h_session) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if ctx.in_message { return CKR_OPERATION_ACTIVE; }
+
+    unsafe {
+        let (iv, _p_tag, tag_bits) = match parse_gcm_msg_params(p_parameter) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let aad = std::slice::from_raw_parts(p_associated_data, ul_associated_data_len as usize).to_vec();
+
+        MESSAGE_DECRYPT_STATE.with(|s| {
+            let mut store = s.borrow_mut();
+            if let Some(c) = store.get_mut(&h_session) {
+                c.in_message = true;
+                c.iv = iv;
+                c.aad = aad;
+                c.tag_bits = tag_bits;
+                c.payload_acc.clear();
+            }
+        });
+    }
+    CKR_OK
+}
+
+#[wasm_bindgen(js_name = _C_DecryptMessageNext)]
+pub fn C_DecryptMessageNext(
+    h_session: u32,
+    p_parameter: *mut u8,
+    _ul_parameter_len: u32,
+    p_ciphertext_part: *const u8,
+    ul_ciphertext_part_len: u32,
+    p_plaintext_part: *mut u8,
+    pul_plaintext_part_len: *mut u32,
+    flags: u32,
+) -> u32 {
+    let ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(c) => c,
+        None => return CKR_OPERATION_NOT_INITIALIZED,
+    };
+    if !ctx.in_message { return CKR_OPERATION_NOT_INITIALIZED; }
+
+    unsafe {
+        if p_plaintext_part.is_null() {
+            *pul_plaintext_part_len = ul_ciphertext_part_len;
+            return CKR_OK;
+        }
+        if *pul_plaintext_part_len < ul_ciphertext_part_len {
+            *pul_plaintext_part_len = ul_ciphertext_part_len;
+            return CKR_BUFFER_TOO_SMALL;
+        }
+
+        MESSAGE_DECRYPT_STATE.with(|s| {
+            if let Some(c) = s.borrow_mut().get_mut(&h_session) {
+                let ct_chunk = std::slice::from_raw_parts(p_ciphertext_part, ul_ciphertext_part_len as usize);
+                c.payload_acc.extend_from_slice(ct_chunk);
+            }
+        });
+
+        if (flags & 0x00000001) != 0 /* CKF_END_OF_MESSAGE */ {
+            let final_ctx = MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let p_tag = if p_parameter.is_null() {
+                return CKR_ARGUMENTS_BAD;
+            } else {
+                *(p_parameter.add(16) as *const u32) as usize as *mut u8
+            };
+
+            match aes_gcm_exec(&final_ctx.key, &final_ctx.iv, &final_ctx.aad, &final_ctx.payload_acc, false, p_tag, final_ctx.tag_bits) {
+                Ok(full_pt) => {
+                    let chunk_start = full_pt.len() - ul_ciphertext_part_len as usize;
+                    std::ptr::copy_nonoverlapping(full_pt[chunk_start..].as_ptr(), p_plaintext_part, ul_ciphertext_part_len as usize);
+                    *pul_plaintext_part_len = ul_ciphertext_part_len;
+                    MESSAGE_DECRYPT_STATE.with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    CKR_OK
+                }
+                Err(e) => {
+                    MESSAGE_DECRYPT_STATE.with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    e
+                }
+            }
+        } else {
+            let intermediate_ctx = MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
+            match aes_gcm_exec(&intermediate_ctx.key, &intermediate_ctx.iv, &intermediate_ctx.aad, &intermediate_ctx.payload_acc, true, fake_tag.as_mut_ptr(), intermediate_ctx.tag_bits) {
+                Ok(full_pt_like) => {
+                    let chunk_start = full_pt_like.len() - ul_ciphertext_part_len as usize;
+                    std::ptr::copy_nonoverlapping(full_pt_like[chunk_start..].as_ptr(), p_plaintext_part, ul_ciphertext_part_len as usize);
+                    *pul_plaintext_part_len = ul_ciphertext_part_len;
+                    CKR_OK
+                }
+                Err(e) => e,
+            }
+        }
+    }
+}
+
+#[wasm_bindgen(js_name = _C_MessageDecryptFinal)]
+pub fn C_MessageDecryptFinal(h_session: u32) -> u32 {
+    MESSAGE_DECRYPT_STATE.with(|s| s.borrow_mut().remove(&h_session));
+    CKR_OK
 }
 
 #[wasm_bindgen]

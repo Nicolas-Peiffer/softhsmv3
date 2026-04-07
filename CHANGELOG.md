@@ -10,6 +10,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.10] — 2026-04-07
+
+### Added
+
+- **`CKM_ECDSA_SHA512` (0x1046) — Rust engine**: ECDSA with SHA-512 prehash on P-256 and P-384.
+  Required for the `id-MLDSA65-ECDSA-P256-SHA512` composite certificate OID
+  (draft-ietf-lamps-pq-composite-sigs). Previously returned `CKR_MECHANISM_INVALID`.
+
+- **Message Encrypt/Decrypt API — Rust engine** (PKCS#11 v3.0 per-message AEAD, 10 functions):
+  `C_MessageEncryptInit`, `C_EncryptMessage`, `C_EncryptMessageBegin`, `C_EncryptMessageNext`,
+  `C_MessageEncryptFinal`, `C_MessageDecryptInit`, `C_DecryptMessage`, `C_DecryptMessageBegin`,
+  `C_DecryptMessageNext`, `C_MessageDecryptFinal`. AES-GCM with per-message IV and AAD.
+  State tracked in `MsgAeadCtx` (key, IV, AAD, tag bits, payload accumulator, `in_message` guard).
+
+- **`C_VerifySignatureUpdate` / `C_VerifySignatureFinal` — Rust engine**: Streaming pre-bound
+  verify (PKCS#11 v3.2 §11.15). Accumulates message parts in `VerifySigCtx.msg_acc`, then
+  delegates to `C_Verify` on `Final`. Completes the multi-part pre-bound verify surface
+  introduced in v0.4.8.
+
+- **PKCS#11 v3.2 async stubs — Rust engine**: `C_GetSessionValidationFlags`, `C_AsyncComplete`,
+  `C_AsyncGetID` return `CKR_FUNCTION_NOT_SUPPORTED`. Brings total Rust exports to **85 PKCS#11
+  functions** (plus `set_kat_seed`).
+
+### Fixed
+
+- **`CKM_ECDSA_SHA512` hash truncation (FIPS 186-5 §6.4)**: SHA-512 produces 64 bytes but
+  `p256::PrehashSigner` requires exactly 32 bytes (P-256 field size). Sign and verify now
+  truncate to the leftmost 32 bytes for P-256, 48 bytes for P-384, per spec.
+
+- **G-ATTR1a — ML-DSA public key `CKA_VALUE` — C++ engine**: Was `checks=0`; corrected to
+  `ck1|ck4` per PKCS#11 v3.2 Table 280 (`^1` required for `C_CreateObject`, `^4` MUST NOT for
+  `C_GenerateKeyPair`). `CKA_PARAMETER_SET` corrected to `ck1|ck3` (was `ck3` only, missing `^1`).
+
+- **G-ATTR1b — SLH-DSA public key `CKA_VALUE` — C++ engine**: Same fix as G-ATTR1a; references
+  spec Table 287. `CKA_PARAMETER_SET` corrected to `ck1|ck3`.
+
+- **G-ATTR1c — ML-KEM public key `CKA_VALUE` — C++ engine**: Same fix; references spec Table 290.
+  `CKA_PARAMETER_SET` corrected to `ck1|ck3`.
+
+- **HSS public key attribute flags — C++ engine**: `CKA_VALUE` corrected to `ck1|ck4`;
+  `CKA_HSS_LEVELS`, `CKA_HSS_LMS_TYPE`, `CKA_HSS_LMOTS_TYPE`, `CKA_HSS_LMS_TYPES`,
+  `CKA_HSS_LMOTS_TYPES` corrected to `ck2|ck4` (MUST NOT for both create and generate) per
+  PKCS#11 v3.2 Table 269. HSS private key `CKA_VALUE` corrected to `ck1|ck4|ck6|ck7`.
+
+- **XMSS / XMSS-MT attribute flags — C++ engine**: Public key `CKA_VALUE` corrected to `ck1|ck4`,
+  `CKA_PARAMETER_SET` to `ck1|ck3`. Private key `CKA_VALUE` corrected to `ck1|ck4|ck6|ck7`,
+  `CKA_PARAMETER_SET` to `ck1|ck4|ck6`. Same corrections applied to XMSS-MT objects. Per
+  PKCS#11 v3.2 Tables 273, 275 (and XMSS-MT equivalents).
+
+- **`P11AttrParameterSet`, `P11AttrHssLevels/LmsType/LmotsType/LmsTypes/LmotsTypes` base
+  constructors — C++ engine**: Removed erroneous `ck1` from default `checks` in base constructor
+  bodies. Flags are now set exclusively at the call site in `P11Objects.cpp` via the `inchecks`
+  parameter, eliminating double-application of `ck1` that could cause spurious
+  `CKR_TEMPLATE_INCOMPLETE` on `C_GenerateKeyPair`.
+
+- **`Slot::isTokenPresent()` — C++ engine**: Now returns `token->isInitialized()` instead of
+  unconditional `true`. Uninitialized placeholder slots are no longer reported as token-present,
+  fixing `C_GetSlotList(tokenPresent=CK_TRUE)` to correctly exclude empty slots per PKCS#11
+  v3.2 §4.2.2.
+
+---
+
 ## [0.4.8] — 2026-04-06
 
 ### Added

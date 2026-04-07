@@ -20,6 +20,9 @@ pub const CKR_KEY_UNEXTRACTABLE: u32 = 0x0000_006A;
 pub const CKR_KEY_FUNCTION_NOT_PERMITTED: u32 = 0x0000_0068;
 pub const CKR_ATTRIBUTE_TYPE_INVALID: u32 = 0x0000_0012; // PKCS#11 §11.7 — attribute not present on object
 pub const CKR_BUFFER_TOO_SMALL: u32 = 0x0000_0150;
+pub const CKR_ENCRYPTED_DATA_INVALID: u32 = 0x0000_0040;
+pub const CKR_KEY_SIZE_RANGE: u32 = 0x0000_0062;
+pub const CKR_OPERATION_ACTIVE: u32 = 0x0000_0090;
 
 // ── PKCS#11 Attribute Types ──────────────────────────────────────────────────
 
@@ -189,6 +192,7 @@ pub const CKF_BIP32_HARDENED: u32 = 0x8000_0000;
 pub const CKM_EC_KEY_PAIR_GEN: u32 = 0x0000_1040;
 pub const CKM_ECDSA_SHA256: u32 = 0x0000_1044;
 pub const CKM_ECDSA_SHA384: u32 = 0x0000_1045;
+pub const CKM_ECDSA_SHA512: u32 = 0x0000_1046;
 // ECDSA with SHA-3 prehash (PKCS#11 v3.2 §6.3)
 pub const CKM_ECDSA_SHA3_224: u32 = 0x0000_1047;
 pub const CKM_ECDSA_SHA3_256: u32 = 0x0000_1048;
@@ -322,6 +326,7 @@ pub const SUPPORTED_MECHS: &[u32] = &[
     CKM_EC_KEY_PAIR_GEN,
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
+    CKM_ECDSA_SHA512,
     CKM_ECDSA_SHA3_224,
     CKM_ECDSA_SHA3_256,
     CKM_ECDSA_SHA3_384,

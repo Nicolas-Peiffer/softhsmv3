@@ -575,6 +575,32 @@ pub fn sign_ecdsa(mech: u32, curve: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<
             let sig: p384::ecdsa::Signature = sk.sign(msg);
             Ok(sig.to_bytes().to_vec())
         }
+        // SHA-512 prehash on P-256 (id-MLDSA65-ECDSA-P256-SHA512 composite OID)
+        // FIPS 186-5 §6.4: when hash length > curve order, use leftmost bits (truncate 64→32)
+        (CKM_ECDSA_SHA512, CURVE_P256) | (CKM_ECDSA_SHA512, 0) => {
+            use p256::ecdsa::signature::hazmat::PrehashSigner;
+            use sha2::Digest as _;
+            let sk = p256::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let hash_full = sha2::Sha512::digest(msg);
+            let hash = &hash_full[..32]; // truncate to P-256 field size (FIPS 186-5 §6.4)
+            let sig: p256::ecdsa::Signature =
+                sk.sign_prehash(hash).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
+        // SHA-512 prehash on P-384
+        // FIPS 186-5 §6.4: when hash length > curve order, use leftmost bits (truncate 64→48)
+        (CKM_ECDSA_SHA512, CURVE_P384) => {
+            use p384::ecdsa::signature::hazmat::PrehashSigner;
+            use sha2::Digest as _;
+            let sk = p384::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let hash_full = sha2::Sha512::digest(msg);
+            let hash = &hash_full[..48]; // truncate to P-384 field size (FIPS 186-5 §6.4)
+            let sig: p384::ecdsa::Signature =
+                sk.sign_prehash(hash).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
         (CKM_ECDSA_SHA256, CURVE_K256) => {
             use k256::ecdsa::signature::Signer;
             let sk = k256::ecdsa::SigningKey::from_slice(sk_bytes)
@@ -702,7 +728,7 @@ pub fn get_sig_len(mech: u32, hkey: u32) -> u32 {
         CKM_KMAC_128 => 32,
         CKM_KMAC_256 => 64,
         CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => 512,
-        CKM_ECDSA_SHA256 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256 => 64,
+        CKM_ECDSA_SHA256 | CKM_ECDSA_SHA512 | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256 => 64,
         CKM_ECDSA_SHA384 | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => 96,
         CKM_EDDSA | CKM_EDDSA_PH => 64,
         _ => 512,
@@ -873,6 +899,32 @@ pub fn verify_ecdsa(
             let sig =
                 p384::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
             vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+        }
+        // SHA-512 prehash on P-256 (id-MLDSA65-ECDSA-P256-SHA512 composite OID)
+        // FIPS 186-5 §6.4: truncate 64-byte hash to leftmost 32 bytes (P-256 field size)
+        (CKM_ECDSA_SHA512, CURVE_P256) | (CKM_ECDSA_SHA512, 0) => {
+            use p256::ecdsa::signature::hazmat::PrehashVerifier;
+            use sha2::Digest as _;
+            let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p256::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            let hash_full = sha2::Sha512::digest(msg);
+            let hash = &hash_full[..32]; // truncate to P-256 field size (FIPS 186-5 §6.4)
+            vk.verify_prehash(hash, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+        }
+        // SHA-512 prehash on P-384
+        // FIPS 186-5 §6.4: truncate 64-byte hash to leftmost 48 bytes (P-384 field size)
+        (CKM_ECDSA_SHA512, CURVE_P384) => {
+            use p384::ecdsa::signature::hazmat::PrehashVerifier;
+            use sha2::Digest as _;
+            let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p384::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            let hash_full = sha2::Sha512::digest(msg);
+            let hash = &hash_full[..48]; // truncate to P-384 field size (FIPS 186-5 §6.4)
+            vk.verify_prehash(hash, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
         }
         (CKM_ECDSA_SHA256, CURVE_K256) => {
             use k256::ecdsa::signature::Verifier;

@@ -12,8 +12,11 @@ thread_local! {
     pub static NEXT_SESSION_HANDLE: RefCell<u32> = const { RefCell::new(1) };
     pub static SIGN_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
     pub static VERIFY_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
+    pub static VERIFY_SIG_STATE: RefCell<HashMap<u32, VerifySigCtx>> = RefCell::new(HashMap::new());
     pub static ENCRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
     pub static DECRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
+    pub static MESSAGE_ENCRYPT_STATE: RefCell<HashMap<u32, MsgAeadCtx>> = RefCell::new(HashMap::new());
+    pub static MESSAGE_DECRYPT_STATE: RefCell<HashMap<u32, MsgAeadCtx>> = RefCell::new(HashMap::new());
     pub static DIGEST_STATE: RefCell<HashMap<u32, DigestCtx>> = RefCell::new(HashMap::new());
     pub static FIND_STATE: RefCell<HashMap<u32, FindCtx>> = RefCell::new(HashMap::new());
     /// Persistent ACVP deterministic RNG — created once in C_Initialize, advances
@@ -86,6 +89,26 @@ pub struct EncryptCtx {
     pub aad: Vec<u8>,
     #[allow(dead_code)]
     pub tag_bits: u32,
+}
+
+#[derive(Clone)]
+pub struct MsgAeadCtx {
+    pub key: Vec<u8>,
+    pub in_message: bool,
+    pub iv: Vec<u8>,
+    pub aad: Vec<u8>,
+    pub tag_bits: u32,
+    pub payload_acc: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub struct VerifySigCtx {
+    pub mech_type: u32,
+    pub key_handle: u32,
+    pub signature: Vec<u8>,
+    pub msg_acc: Vec<u8>,
+    pub slh_ctx: Vec<u8>,
+    pub slh_det: bool,
 }
 
 /// Set PKCS#11 v3.2 mandatory object-management attribute defaults on a key before it

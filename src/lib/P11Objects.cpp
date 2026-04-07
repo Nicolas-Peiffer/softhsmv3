@@ -1792,9 +1792,9 @@ bool P11MLDSAPublicKeyObj::init(OSObject *inobject)
 	// Create parent
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	// Create attributes
-	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck3);
-	P11Attribute* attrValue    = new P11AttrValue(osobject, 0);
+	// Create attributes — per spec Table 280: CKA_PARAMETER_SET^1,3  CKA_VALUE^1,4
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck3);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 
 	// Initialize the attributes
 	if (!attrParamSet->init() || !attrValue->init())
@@ -1837,7 +1837,7 @@ bool P11MLDSAPrivateKeyObj::init(OSObject *inobject)
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
 	// Create attributes
-	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck4 | P11Attribute::ck6);
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6);
 	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
 
 	// Initialize the attributes
@@ -1880,9 +1880,9 @@ bool P11SLHDSAPublicKeyObj::init(OSObject *inobject)
 	// Create parent
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	// Create attributes
-	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck3);
-	P11Attribute* attrValue    = new P11AttrValue(osobject, 0);
+	// Create attributes — per spec Table 287: CKA_PARAMETER_SET^1,3  CKA_VALUE^1,4
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck3);
+	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 
 	// Initialize the attributes
 	if (!attrParamSet->init() || !attrValue->init())
@@ -1925,7 +1925,7 @@ bool P11SLHDSAPrivateKeyObj::init(OSObject *inobject)
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
 	// Create attributes
-	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck4 | P11Attribute::ck6);
+	P11Attribute* attrParamSet = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6);
 	P11Attribute* attrValue    = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
 
 	// Initialize the attributes
@@ -1968,9 +1968,9 @@ bool P11MLKEMPublicKeyObj::init(OSObject *inobject)
 	// Create parent
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	// Create attributes
-	P11Attribute* attrParamSet    = new P11AttrParameterSet(osobject, P11Attribute::ck3);
-	P11Attribute* attrValue       = new P11AttrValue(osobject, 0);
+	// Create attributes — per spec Table 290: CKA_PARAMETER_SET^1,3  CKA_VALUE^1,4
+	P11Attribute* attrParamSet    = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck3);
+	P11Attribute* attrValue       = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 	P11Attribute* attrEncapsulate = new P11AttrEncapsulate(osobject);
 
 	// Initialize the attributes
@@ -2016,7 +2016,7 @@ bool P11MLKEMPrivateKeyObj::init(OSObject *inobject)
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
 	// Create attributes
-	P11Attribute* attrParamSet    = new P11AttrParameterSet(osobject, P11Attribute::ck4 | P11Attribute::ck6);
+	P11Attribute* attrParamSet    = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6);
 	P11Attribute* attrValue       = new P11AttrValue(osobject, P11Attribute::ck1 | P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
 	P11Attribute* attrDecapsulate = new P11AttrDecapsulate(osobject);
 
@@ -2050,15 +2050,17 @@ bool P11HSSPublicKeyObj::init(OSObject *inobject)
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
 	// Standard PKCS#11 v3.2 §6.14 HSS public key attributes
-	P11Attribute* attrValue         = new P11AttrValue(osobject, 0);
+	// CKA_VALUE^1,4: required for C_CreateObject, MUST NOT for C_GenerateKeyPair
+	// CKA_HSS_LEVELS/LMS_TYPE/LMOTS_TYPE^2,4: MUST NOT for C_CreateObject or C_GenerateKeyPair
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 	P11Attribute* attrVerify        = new P11AttrVerify(osobject);
 	P11Attribute* attrEncrypt       = new P11AttrEncrypt(osobject);
 	P11Attribute* attrWrap          = new P11AttrWrap(osobject);
-	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject);
-	P11Attribute* attrLmsType       = new P11AttrHssLmsType(osobject);
-	P11Attribute* attrLmotsType     = new P11AttrHssLmotsType(osobject);
-	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject);
-	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject);
+	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject, P11Attribute::ck2|P11Attribute::ck4);
+	P11Attribute* attrLmsType       = new P11AttrHssLmsType(osobject, P11Attribute::ck2|P11Attribute::ck4);
+	P11Attribute* attrLmotsType     = new P11AttrHssLmotsType(osobject, P11Attribute::ck2|P11Attribute::ck4);
+	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject, P11Attribute::ck2|P11Attribute::ck4);
+	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject, P11Attribute::ck2|P11Attribute::ck4);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
@@ -2099,18 +2101,20 @@ bool P11HSSPrivateKeyObj::init(OSObject *inobject)
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
 	// Standard PKCS#11 v3.2 §6.14 HSS private key attributes
-	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	// CKA_VALUE^1,4,6,7; CKA_HSS_LEVELS/LMS_TYPES/LMOTS_TYPES^1,3 (required for create AND generate)
+	// CKA_HSS_LMS_TYPE/LMOTS_TYPE (singular) not in private key spec table — optional
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6|P11Attribute::ck7);
 	P11Attribute* attrSign          = new P11AttrSign(osobject);
 	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
 	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
 	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
 	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
 	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
-	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject);
+	P11Attribute* attrLevels        = new P11AttrHssLevels(osobject, P11Attribute::ck1|P11Attribute::ck3);
 	P11Attribute* attrLmsType       = new P11AttrHssLmsType(osobject);
 	P11Attribute* attrLmotsType     = new P11AttrHssLmotsType(osobject);
-	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject);
-	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject);
+	P11Attribute* attrLmsTypes      = new P11AttrHssLmsTypes(osobject, P11Attribute::ck1|P11Attribute::ck3);
+	P11Attribute* attrLmotsTypes    = new P11AttrHssLmotsTypes(osobject, P11Attribute::ck1|P11Attribute::ck3);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||
@@ -2155,12 +2159,12 @@ bool P11XMSSPublicKeyObj::init(OSObject *inobject)
 	if (inobject == NULL) return false;
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	// Standard PKCS#11 v3.2 XMSS public key: CKA_PARAMETER_SET selects variant
-	P11Attribute* attrValue      = new P11AttrValue(osobject, 0);
+	// Standard PKCS#11 v3.2 XMSS public key: CKA_PARAMETER_SET^1,3; CKA_VALUE^1,4
+	P11Attribute* attrValue      = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 	P11Attribute* attrVerify     = new P11AttrVerify(osobject);
 	P11Attribute* attrEncrypt    = new P11AttrEncrypt(osobject);
 	P11Attribute* attrWrap       = new P11AttrWrap(osobject);
-	P11Attribute* attrParamSet   = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrParamSet   = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck3);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
@@ -2193,14 +2197,15 @@ bool P11XMSSPrivateKeyObj::init(OSObject *inobject)
 	if (inobject == NULL) return false;
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
-	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	// CKA_VALUE^1,4,6,7; CKA_PARAMETER_SET^1,4,6 per PKCS#11 v3.2 XMSS private key
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6|P11Attribute::ck7);
 	P11Attribute* attrSign          = new P11AttrSign(osobject);
 	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
 	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
 	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
 	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
 	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
-	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||
@@ -2238,11 +2243,12 @@ bool P11XMSSMTPublicKeyObj::init(OSObject *inobject)
 	if (inobject == NULL) return false;
 	if (!P11PublicKeyObj::init(inobject)) return false;
 
-	P11Attribute* attrValue         = new P11AttrValue(osobject, 0);
+	// CKA_VALUE^1,4; CKA_PARAMETER_SET^1,3 per PKCS#11 v3.2 XMSS-MT public key
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4);
 	P11Attribute* attrVerify        = new P11AttrVerify(osobject);
 	P11Attribute* attrEncrypt       = new P11AttrEncrypt(osobject);
 	P11Attribute* attrWrap          = new P11AttrWrap(osobject);
-	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck3);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrVerify->init() || !attrEncrypt->init() ||
@@ -2275,14 +2281,15 @@ bool P11XMSSMTPrivateKeyObj::init(OSObject *inobject)
 	if (inobject == NULL) return false;
 	if (!P11PrivateKeyObj::init(inobject)) return false;
 
-	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck4 | P11Attribute::ck6 | P11Attribute::ck7);
+	// CKA_VALUE^1,4,6,7; CKA_PARAMETER_SET^1,4,6 per PKCS#11 v3.2 XMSS-MT private key
+	P11Attribute* attrValue         = new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6|P11Attribute::ck7);
 	P11Attribute* attrSign          = new P11AttrSign(osobject);
 	P11Attribute* attrSensitive     = new P11AttrSensitive(osobject);
 	P11Attribute* attrExtractable   = new P11AttrExtractable(osobject);
 	P11Attribute* attrDecrypt       = new P11AttrDecrypt(osobject);
 	P11Attribute* attrUnwrap        = new P11AttrUnwrap(osobject);
 	P11Attribute* attrDerive        = new P11AttrDerive(osobject);
-	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck4);
+	P11Attribute* attrParamSet      = new P11AttrParameterSet(osobject, P11Attribute::ck1|P11Attribute::ck4|P11Attribute::ck6);
 	P11Attribute* attrKeysRemaining = new P11AttrHssKeysRemaining(osobject);
 
 	if (!attrValue->init() || !attrSign->init() || !attrSensitive->init() ||

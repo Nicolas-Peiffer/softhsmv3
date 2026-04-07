@@ -74,13 +74,14 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 | C_EncapsulateKey | Not supported | **Implemented** |
 | C_DecapsulateKey | Not supported | **Implemented** |
 | C_SignMessage / C_VerifyMessage | Not supported | **Implemented** (v3.0 one-shot + streaming) |
-| Message Encrypt/Decrypt API | Not supported | **Implemented** (AES-GCM per-message AEAD) |
-| C_VerifySignatureInit / C_VerifySignature | Not supported | **Implemented** (v3.2 pre-bound verify) |
+| Message Encrypt/Decrypt API | Not supported | **Implemented** (AES-GCM per-message AEAD, both engines) |
+| C_VerifySignatureInit / C_VerifySignature | Not supported | **Implemented** (v3.2 pre-bound verify, both engines) |
+| C_VerifySignatureUpdate / C_VerifySignatureFinal | Not supported | **Implemented** (v3.2 streaming pre-bound verify — Rust engine) |
 | C_WrapKeyAuthenticated / C_UnwrapKeyAuthenticated | Not supported | **Implemented** (v3.2 AES-GCM key wrap) |
 | Key derivation (HKDF, KBKDF, cofactor ECDH) | Not supported | **`CKM_HKDF_DERIVE`, `CKM_SP800_108_COUNTER_KDF`, `CKM_SP800_108_FEEDBACK_KDF`, `CKM_ECDH1_COFACTOR_DERIVE`** |
 | PBKDF2 (`CKM_PKCS5_PBKD2`) | Not supported | **Implemented** — HMAC-SHA{1/224/256/384/512} PRF; BIP39 / SLIP-0010 seed derivation |
 | ECDH1 with KDF (`CKD_SHA*_KDF`) | Not supported | **Implemented** — X9.63 SHA{1/256/384/512} KDF on `CKM_ECDH1_DERIVE`; 5G SUCI deconcealment (TS 33.501 §6.12.2) |
-| SHA-3 signature variants | Not supported | **C++:** `CKM_ECDSA_SHA3_224/256/384/512`, `CKM_RSA_SHA3_224/256/384/512_PKCS/_PKCS_PSS` — **Rust:** `CKM_ECDSA_SHA3_224/256/384/512` |
+| SHA-3 signature variants | Not supported | **C++:** `CKM_ECDSA_SHA3_224/256/384/512`, `CKM_RSA_SHA3_224/256/384/512_PKCS/_PKCS_PSS` — **Rust:** `CKM_ECDSA_SHA3_224/256/384/512` + `CKM_ECDSA_SHA512` |
 | GOST/DES/DSA/DH | Included | Removed (focused codebase) |
 | WASM build | Not supported | **Emscripten + Rust `wasm32-unknown-unknown`** |
 | Rust WASM engine | N/A | **Pure Rust (~1.4 MB), drop-in parity** |
@@ -204,6 +205,8 @@ C_MessageDecryptFinal()
 // Verify a signature against data received afterwards (signature-first pattern)
 C_VerifySignatureInit()   // Bind signature and algorithm to session
 C_VerifySignature()       // Verify against data (one-shot)
+C_VerifySignatureUpdate() // Stream message data (multi-part)
+C_VerifySignatureFinal()  // Complete multi-part pre-bound verify
 ```
 
 ### Authenticated Key Wrap/Unwrap (v3.2)
@@ -217,7 +220,10 @@ C_UnwrapKeyAuthenticated()
 ### Classical Signatures — SHA-3 variants
 
 ```c
-// ECDSA with SHA-3 pre-hash (C++ and Rust engines)
+// ECDSA with SHA-2/SHA-3 pre-hash (C++ and Rust engines)
+CKM_ECDSA_SHA256           = 0x00001044
+CKM_ECDSA_SHA384           = 0x00001045
+CKM_ECDSA_SHA512           = 0x00001046  // Rust: FIPS 186-5 §6.4 truncation for P-256/P-384
 CKM_ECDSA_SHA3_224         = 0x00001047
 CKM_ECDSA_SHA3_256         = 0x00001048
 CKM_ECDSA_SHA3_384         = 0x00001049
@@ -322,7 +328,7 @@ Memory management (`_malloc`, `_free`), `HEAPU8`, `setValue`, and `getValue` are
 
 ### Supported PKCS#11 Functions
 
-The Rust engine exports 65 PKCS#11 functions (49 fully implemented, 8 multi-part stubs, 8 admin stubs):
+The Rust engine exports 85 PKCS#11 functions (63 fully implemented, 8 multi-part stubs, 11 stubs, plus `set_kat_seed`):
 
 | Category | Functions |
 | --- | --- |
@@ -331,7 +337,9 @@ The Rust engine exports 65 PKCS#11 functions (49 fully implemented, 8 multi-part
 | Key Generation | `C_GenerateKeyPair`, `C_GenerateKey` |
 | KEM | `C_EncapsulateKey`, `C_DecapsulateKey` |
 | Sign/Verify | `C_SignInit`, `C_Sign`, `C_VerifyInit`, `C_Verify` |
+| Pre-Bound Verify (v3.2) | `C_VerifySignatureInit`, `C_VerifySignature`, `C_VerifySignatureUpdate`, `C_VerifySignatureFinal` |
 | Message Sign/Verify | `C_MessageSignInit`, `C_SignMessage`, `C_MessageSignFinal`, `C_MessageVerifyInit`, `C_VerifyMessage`, `C_MessageVerifyFinal` |
+| Message Encrypt/Decrypt | `C_MessageEncryptInit`, `C_EncryptMessage`, `C_EncryptMessageBegin`, `C_EncryptMessageNext`, `C_MessageEncryptFinal`, `C_MessageDecryptInit`, `C_DecryptMessage`, `C_DecryptMessageBegin`, `C_DecryptMessageNext`, `C_MessageDecryptFinal` |
 | Encrypt/Decrypt | `C_EncryptInit`, `C_Encrypt`, `C_DecryptInit`, `C_Decrypt` |
 | Digest | `C_DigestInit`, `C_DigestUpdate`, `C_DigestFinal`, `C_Digest` |
 | Object | `C_CreateObject`, `C_DestroyObject`, `C_GetAttributeValue`, `C_FindObjectsInit`, `C_FindObjects`, `C_FindObjectsFinal` |
@@ -339,8 +347,9 @@ The Rust engine exports 65 PKCS#11 functions (49 fully implemented, 8 multi-part
 | Utility | `C_GenerateRandom` |
 | Multi-part (stubs) | `C_SignUpdate`, `C_SignFinal`, `C_VerifyUpdate`, `C_VerifyFinal`, `C_EncryptUpdate`, `C_EncryptFinal`, `C_DecryptUpdate`, `C_DecryptFinal` |
 | Admin (stubs) | `C_SetPIN`, `C_CopyObject`, `C_GetObjectSize`, `C_SetAttributeValue`, `C_DigestKey`, `C_GetOperationState`, `C_SetOperationState`, `C_SeedRandom` |
+| v3.2 Async (stubs) | `C_GetSessionValidationFlags`, `C_AsyncComplete`, `C_AsyncGetID` |
 
-Multi-part and admin stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The browser playground uses single-shot operations only.
+Multi-part, admin, and async stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The browser playground uses single-shot operations only.
 
 ### Supported Algorithms
 
@@ -353,7 +362,7 @@ Multi-part and admin stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The browser play
 **Classical:**
 
 - RSA (PKCS#1 v1.5, OAEP, PSS — keygen + sign/verify)
-- ECDSA P-256/P-384 (keygen, sign, verify) — including ECDSA-SHA3-224/256/384/512
+- ECDSA P-256/P-384 (keygen, sign, verify) — including ECDSA-SHA512 (FIPS 186-5 §6.4) and ECDSA-SHA3-224/256/384/512
 - Ed25519 (keygen, sign, verify)
 - ECDH P-256 + X25519 (key agreement via `C_DeriveKey`)
 - AES-128/256 (GCM, CBC-PAD, CTR, Key Wrap, Key Wrap with Padding, Authenticated Wrap/Unwrap)
@@ -363,7 +372,7 @@ Multi-part and admin stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The browser play
 
 > **Note:** RSA-SHA3 variants (`CKM_RSA_SHA3_*_PKCS`, `CKM_RSA_SHA3_*_PKCS_PSS`) and ECDH1 with X9.63 KDF are C++ engine only.
 
-**62 mechanisms** registered in `C_GetMechanismList` — 100% have implementations.
+**63 mechanisms** registered in `C_GetMechanismList` — 100% have implementations.
 
 ### PKCS#11 v3.2 Compliance Enforcement
 
@@ -540,6 +549,17 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
   - [x] C++ + Rust: XMSS/XMSS^MT registered in `C_GetMechanismInfo` with `CKF_SIGN | CKF_VERIFY`
   - [x] Rust: `Sha256_192`, `Shake256_256`, `Shake256_192` hash type dispatch in LMS keygen
   - [x] NIST ACVP LMS sigVer: 320/320 demo vectors validated (all 80 parameter combinations)
+- [x] Phase 13: PKCS#11 v3.2 attribute compliance audit + Rust engine API completeness (v0.4.10)
+  - [x] Rust: `CKM_ECDSA_SHA512` (0x1046) — FIPS 186-5 §6.4 prehash truncation for P-256/P-384
+  - [x] Rust: Message Encrypt/Decrypt API — 10 functions (`C_MessageEncryptInit` through `C_MessageDecryptFinal`), AES-GCM per-message AEAD
+  - [x] Rust: `C_VerifySignatureUpdate` / `C_VerifySignatureFinal` — streaming pre-bound verify (completes v3.2 §11.15 surface)
+  - [x] Rust: `C_GetSessionValidationFlags`, `C_AsyncComplete`, `C_AsyncGetID` — v3.2 async stubs (85 total PKCS#11 exports)
+  - [x] C++: G-ATTR1a/b/c — `CKA_VALUE ck1|ck4` on ML-DSA, SLH-DSA, ML-KEM public key objects (spec Tables 280, 287, 290)
+  - [x] C++: `CKA_PARAMETER_SET` corrected to `ck1|ck3` on ML-DSA/SLH-DSA/ML-KEM/XMSS/XMSS-MT public keys; `ck1|ck4|ck6` on private keys
+  - [x] C++: HSS public key `CKA_HSS_LEVELS/LMS_TYPE/LMOTS_TYPE/LMS_TYPES/LMOTS_TYPES` corrected to `ck2|ck4` (MUST NOT for create and generate)
+  - [x] C++: HSS/XMSS private key `CKA_VALUE` corrected to `ck1|ck4|ck6|ck7`
+  - [x] C++: `P11AttrParameterSet` and HSS attribute base constructors — removed erroneous hardcoded `ck1`; flags now set exclusively at call site
+  - [x] C++: `Slot::isTokenPresent()` returns `token->isInitialized()` — uninitialized slots excluded from `C_GetSlotList(tokenPresent=TRUE)`
 
 ## Building (Native)
 

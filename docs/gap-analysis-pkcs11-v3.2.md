@@ -1,6 +1,8 @@
-# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v9)
+# PKCS#11 v3.2 Compliance Gap Analysis — softhsmv3 (v12)
 
-**Updated:** 2026-04-01 (v9 — SLH-DSA context string G4 + deterministic mode G5 resolved, full C++/Rust/TypeScript parity)
+**Updated:** 2026-04-06 (v12 — SHA-256 ABI fix: `hash-sigs/sha256.h` now uses `USE_OPENSSL=1` so `hash_context` union uses OpenSSL's `SHA256_CTX` (112 B) matching the linked OpenSSL SHA256; eliminates WASM unreachable trap in `hss_validate_signature` during C_Verify)
+**Prior:** 2026-04-06 (v11 — G-ATTR1a/b/c resolved: ML-DSA/SLH-DSA/ML-KEM public key `CKA_VALUE` now `ck1|ck4`; TypeScript template updated for XMSS `CKA_PARAMETER_SET`; all open items closed)
+**Prior:** 2026-04-01 (v9 — SLH-DSA context string G4 + deterministic mode G5 resolved, full C++/Rust/TypeScript parity)
 **Baseline:** Post-Phase-8 + G4 (SLH-DSA context string, FIPS 205 §9.2) + G5 (SLH-DSA deterministic mode, FIPS 205 §10) — all tracked gaps resolved
 **Spec reference:** OASIS PKCS#11 v3.2 CSD01 (<http://docs.oasis-open.org/pkcs11/pkcs11-base/v3.2/>)
 **Prior baseline (v8):** CKM_KMAC_128/256 vendor extension (G-KMAC1/KMAC2), C_GetMechanismInfo full coverage (2026-03-13).
@@ -58,7 +60,7 @@ FIPS 205 §10) implemented across the full stack:
 | --- | --- | --- |
 | C_* function stubs (in scope) | 0 | All G1–G6 + G-DA1/G-DA2 + G-5G1/5G2/5G3 + G-PUB1/G-PK1/G-PK2/G-PK4 + G-KMAC1/KMAC2 resolved |
 | CKM_* mechanisms (in scope) | 0 | AES-CTR, HKDF, X9.63 KDF, SP 800-108 Counter+Feedback KDF, ECDH1 Cofactor, KMAC-128/256 added |
-| CKA_* attribute stubs (in scope) | 0 | CKA_PUBLIC_KEY_INFO now populated at keygen for all key types |
+| CKA_* attribute stubs (in scope) | 3 | CKA_VALUE `ck1\|ck4` missing on ML-DSA/SLH-DSA/ML-KEM public key objects — see §1.21 |
 | Out-of-scope stubs | 2 | Async (G7), Recovery/Combined ops (G8) |
 | Out-of-scope mechanisms | 1 | CKM_RIPEMD160 (WASM `no-module` constraint, G9) |
 
@@ -617,3 +619,162 @@ Note: KMAC is not yet assigned a standard CKM value in PKCS#11 v3.2 CSD01; vendo
 - `test_slh_dsa_context_cross_verify_fails_on_mismatch` — sign with "sign-ctx", verify with "verify-ctx" → `CKR_SIGNATURE_INVALID`
 
 **Bugfix (v9.1):** `C_SignMessage` and `C_VerifyMessage` were silently discarding context and deterministic flag on every call. Root cause: `AsymSign`/`AsymVerify` call `Session::resetOp()` which frees `param`. Since `C_SignMessage` is invoked twice per message in the two-pass pattern (size query + real sign), the params stored by `C_MessageSignInit` were wiped after the size query, so the actual sign ran with no context. Fix: snapshot `session->param` before `AsymSign`/`AsymVerify` and restore on success. Confirmed in browser ACVP tests 21 and 22 (context binding + deterministic).
+
+---
+
+## §1.21 G-ATTR1 — CKA_* Attribute Flag Audit for PQC Key Objects (v10, 2026-04-06)
+
+### Background
+
+PKCS#11 v3.2 Table 13 defines superscript footnotes that appear in every key-object attribute table. Each footnote maps to a `ck*` flag in the SoftHSM2 `P11Attribute` class:
+
+| Spec superscript | ck* flag | Meaning |
+|---|---|---|
+| ^1 | `ck1` | MUST be specified when object is created with `C_CreateObject` |
+| ^2 | `ck2` | MUST NOT be specified when object is created with `C_CreateObject` |
+| ^3 | `ck3` | MUST be specified when object is generated with `C_GenerateKey`/`C_GenerateKeyPair` |
+| ^4 | `ck4` | MUST NOT be specified when object is generated with `C_GenerateKey`/`C_GenerateKeyPair` |
+| ^5 | `ck5` | MUST be specified when object is unwrapped with `C_UnwrapKey` |
+| ^6 | `ck6` | MUST NOT be specified when object is unwrapped with `C_UnwrapKey` |
+| ^7 | `ck7` | Cannot be revealed if CKA_SENSITIVE=TRUE or CKA_EXTRACTABLE=FALSE |
+
+**Important implementation note:** Only `ck1`, `ck3`, and `ck5` are enforced in the `P11Objects::store()` template-completeness loop. `ck2`, `ck4`, `ck6` (MUST NOT flags) are recorded in the attribute's `checks` field but are **not currently enforced** — a non-compliant caller supplying a MUST-NOT attribute will not receive `CKR_TEMPLATE_INCONSISTENT`. This is a known SoftHSM2 limitation, not a regression introduced here.
+
+### Spec-vs-Code Audit Results (P11Objects.cpp, 2026-04-06)
+
+Spec source: PKCS#11 v3.2 Tables 269, 270, 273, 275, 280, 281, 287, 288, 290, 291.
+
+**Legend:** ✓ Correct | **✗ Non-compliant** | ~ Extra attribute (not in spec table, functionally benign)
+
+#### HSS Public Key (Table 269)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_VALUE` | `ck1\|ck4` | `ck1\|ck4` | ✓ |
+| `CKA_HSS_LEVELS` | `ck2\|ck4` | `ck2\|ck4` | ✓ |
+| `CKA_HSS_LMS_TYPE` | `ck2\|ck4` | `ck2\|ck4` | ✓ |
+| `CKA_HSS_LMOTS_TYPE` | `ck2\|ck4` | `ck2\|ck4` | ✓ |
+| `CKA_HSS_LMS_TYPES` | not in Table 269 | `ck2\|ck4` | ~ |
+| `CKA_HSS_LMOTS_TYPES` | not in Table 269 | `ck2\|ck4` | ~ |
+| `CKA_HSS_KEYS_REMAINING` | `ck2\|ck4` | `0` | ~ |
+
+#### HSS Private Key (Table 270)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+| `CKA_HSS_LEVELS` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_HSS_LMS_TYPES` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_HSS_LMOTS_TYPES` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_HSS_KEYS_REMAINING` | `ck2\|ck4` | `0` | ~ |
+| `CKA_HSS_LMS_TYPE` | not in Table 270 | `0` | ~ |
+| `CKA_HSS_LMOTS_TYPE` | not in Table 270 | `0` | ~ |
+
+#### XMSS Public Key (Table 273)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4` | `ck1\|ck4` | ✓ |
+| `CKA_HSS_KEYS_REMAINING` | not in Table 273 | `0` | ~ |
+
+#### XMSS Private Key (Table 275)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck4\|ck6` | `ck1\|ck4\|ck6` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+| `CKA_HSS_KEYS_REMAINING` | not in Table 275 | `0` | ~ |
+
+#### XMSS-MT Public Key
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4` | `ck1\|ck4` | ✓ |
+
+#### XMSS-MT Private Key
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck4\|ck6` | `ck1\|ck4\|ck6` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+
+#### ML-DSA Public Key (Table 280)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4` | `0` | **✗ OPEN** |
+
+#### ML-DSA Private Key (Table 281)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck4\|ck6` | `ck1\|ck4\|ck6` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+
+#### SLH-DSA Public Key (Table 290)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4` | `0` | **✗ OPEN** |
+
+#### SLH-DSA Private Key (Table 291)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck4\|ck6` | `ck1\|ck4\|ck6` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+
+#### ML-KEM Public Key (Table 287)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck3` | `ck1\|ck3` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4` | `0` | **✗ OPEN** |
+
+#### ML-KEM Private Key (Table 288)
+
+| Attribute | Spec flags | Code flags | Status |
+|---|---|---|---|
+| `CKA_PARAMETER_SET` | `ck1\|ck4\|ck6` | `ck1\|ck4\|ck6` | ✓ |
+| `CKA_VALUE` | `ck1\|ck4\|ck6\|ck7` | `ck1\|ck4\|ck6\|ck7` | ✓ |
+
+### Open Items
+
+_None — all items resolved as of v11._
+
+**Resolved G-ATTR1a — ML-DSA public key `CKA_VALUE`** (2026-04-06)
+
+- Was: `checks=0`. Fixed: `new P11AttrValue(osobject, P11Attribute::ck1|P11Attribute::ck4)` in `P11MLDSAPublicKeyObj::init()`. Comment updated to reference spec Table 280.
+
+**Resolved G-ATTR1b — SLH-DSA public key `CKA_VALUE`** (2026-04-06)
+
+- Was: `checks=0`. Fixed: same pattern in `P11SLHDSAPublicKeyObj::init()`. Comment references spec Table 287.
+
+**Resolved G-ATTR1c — ML-KEM public key `CKA_VALUE`** (2026-04-06)
+
+- Was: `checks=0`. Fixed: same pattern in `P11MLKEMPublicKeyObj::init()`. Comment references spec Table 290.
+
+**TypeScript — XMSS `CKA_PARAMETER_SET` in `hsm_importStatefulPublicKey`** (2026-04-06)
+
+- `hsm_importStatefulPublicKey` now accepts optional `paramSet?: number`. When provided, `CKA_PARAMETER_SET` is included in the `C_CreateObject` template — required for XMSS (spec Table 273 `^1` for `C_CreateObject`).
+- `HsmKey` extended with `paramSet?: number`. `XMSSKeyGenDemo` caches `ckpParam` there at generation time. `StatefulSignaturesDemo` passes `key.paramSet` to the import function.
+
+### Pre-existing Minor Deviations (not blocking, tracked for completeness)
+
+- **Extra attributes on HSS objects:** `CKA_HSS_LMS_TYPES`/`CKA_HSS_LMOTS_TYPES` are registered on the public key object (not in Table 269); `CKA_HSS_LMS_TYPE`/`CKA_HSS_LMOTS_TYPE` are registered on the private key object (not in Table 270). These are optional (`checks=0` or `ck2|ck4`) so they cannot block any operation.
+- **`CKA_HSS_KEYS_REMAINING` flags:** Registered with `checks=0` on both HSS pub/priv objects; spec says `ck2|ck4`. Since `ck2` is not enforced in the store loop, this is functionally equivalent.
+- **`CKA_HSS_KEYS_REMAINING` on XMSS/XMSS-MT objects:** Not in spec Tables 273/275 but registered as optional. Non-blocking.
+
+### How to Use This Document
+
+Before making any change to a `P11*KeyObj::init()` function in `P11Objects.cpp` or to any `P11Attr*` constructor in `P11Attributes.h`:
+
+1. Find the relevant spec table number from the section headers above.
+2. Read the exact attribute row and its superscripts from the spec HTML at `public/library/PKCS11-V32-OASIS.html` (pqc-timeline-app repo).
+3. Map superscripts → `ck*` flags using the legend in this section.
+4. Set flags at the **call site in `P11Objects.cpp`** via the `inchecks` parameter, not in the base constructor.
+5. Update this table when the change is made.
