@@ -859,14 +859,9 @@ pub fn C_GenerateKeyPair(
                     Err(_) => return CKR_FUNCTION_FAILED,
                 };
 
-                // Public key: [n_len:4LE][n_bytes][e_bytes]
                 use rsa::traits::PublicKeyParts;
                 let n_bytes = public_key.n().to_bytes_be();
                 let e_bytes = public_key.e().to_bytes_be();
-                let mut pk_bytes = Vec::with_capacity(4 + n_bytes.len() + e_bytes.len());
-                pk_bytes.extend_from_slice(&(n_bytes.len() as u32).to_le_bytes());
-                pk_bytes.extend_from_slice(&n_bytes);
-                pk_bytes.extend_from_slice(&e_bytes);
 
                 let mut pub_attrs = HashMap::new();
                 let mut prv_attrs = HashMap::new();
@@ -904,6 +899,11 @@ pub fn C_GenerateKeyPair(
                     CKA_KEY_GEN_MECHANISM,
                     CKM_RSA_PKCS_KEY_PAIR_GEN,
                 );
+                // PKCS#11 v3.2 §2.1.2 — RSA public key MUST expose CKA_MODULUS and
+                // CKA_PUBLIC_EXPONENT as distinct attributes (not packed into CKA_VALUE).
+                pub_attrs.insert(CKA_MODULUS, n_bytes.to_vec());
+                pub_attrs.insert(CKA_PUBLIC_EXPONENT, e_bytes.to_vec());
+                store_ulong(&mut pub_attrs, CKA_MODULUS_BITS, bits as u32);
                 // SubjectPublicKeyInfo DER (CKA_PUBLIC_KEY_INFO)
                 {
                     use rsa::pkcs8::EncodePublicKey;
@@ -911,7 +911,6 @@ pub fn C_GenerateKeyPair(
                         pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki_der.as_bytes().to_vec());
                     }
                 }
-                pub_attrs.insert(CKA_VALUE, pk_bytes);
                 prv_attrs.insert(CKA_VALUE, sk_der.as_bytes().to_vec());
                 absorb_template_attrs(
                     &mut pub_attrs,
