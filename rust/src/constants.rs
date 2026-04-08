@@ -190,6 +190,7 @@ pub const CKM_BIP32_CHILD_DERIVE: u32 = 0x0000_105C;
 pub const CKF_BIP32_HARDENED: u32 = 0x8000_0000;
 
 pub const CKM_EC_KEY_PAIR_GEN: u32 = 0x0000_1040;
+pub const CKM_ECDSA: u32 = 0x0000_1041; // PKCS#11 v3.2 §6.3.12 — raw (pre-hashed), no parameter, single-part only, token truncates internally
 pub const CKM_ECDSA_SHA256: u32 = 0x0000_1044;
 pub const CKM_ECDSA_SHA384: u32 = 0x0000_1045;
 pub const CKM_ECDSA_SHA512: u32 = 0x0000_1046;
@@ -324,6 +325,7 @@ pub const SUPPORTED_MECHS: &[u32] = &[
     CKM_GENERIC_SECRET_KEY_GEN,
     // EC / ECDSA / EdDSA
     CKM_EC_KEY_PAIR_GEN,
+    CKM_ECDSA,
     CKM_ECDSA_SHA256,
     CKM_ECDSA_SHA384,
     CKM_ECDSA_SHA512,

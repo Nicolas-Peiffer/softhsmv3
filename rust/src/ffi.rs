@@ -1976,8 +1976,9 @@ pub fn C_Sign(
             | CKM_SHA3_512_HMAC => sign_hmac(eff_mech, &sk_bytes, eff_msg),
             CKM_KMAC_128 | CKM_KMAC_256 => sign_kmac(eff_mech, &sk_bytes, eff_msg),
             CKM_SHA256_RSA_PKCS | CKM_SHA256_RSA_PKCS_PSS => sign_rsa(eff_mech, &sk_bytes, eff_msg),
-            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512 | CKM_ECDSA_SHA3_224
-            | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => {
+            CKM_ECDSA | CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512
+            | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384
+            | CKM_ECDSA_SHA3_512 => {
                 sign_ecdsa(eff_mech, ps, &sk_bytes, eff_msg)
             }
             CKM_EDDSA => sign_eddsa(&sk_bytes, eff_msg),
@@ -2139,8 +2140,9 @@ pub fn C_Verify(
                 }
             }
             // PKCS#11 v3.2: EC public key material is in CKA_EC_POINT.
-            CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512 | CKM_ECDSA_SHA3_224
-            | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384 | CKM_ECDSA_SHA3_512 => match &ec_point_bytes {
+            CKM_ECDSA | CKM_ECDSA_SHA256 | CKM_ECDSA_SHA384 | CKM_ECDSA_SHA512
+            | CKM_ECDSA_SHA3_224 | CKM_ECDSA_SHA3_256 | CKM_ECDSA_SHA3_384
+            | CKM_ECDSA_SHA3_512 => match &ec_point_bytes {
                 Some(b) => verify_ecdsa(eff_mech, ps, b, eff_msg, sig_bytes),
                 None => Err(CKR_KEY_TYPE_INCONSISTENT),
             },

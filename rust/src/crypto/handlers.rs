@@ -639,6 +639,33 @@ pub fn sign_ecdsa(mech: u32, curve: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<
                 sk.sign_prehash(&hash).map_err(|_| CKR_FUNCTION_FAILED)?;
             Ok(sig.to_bytes().to_vec())
         }
+        // CKM_ECDSA raw (pre-hashed) — PKCS#11 v3.2 §6.3.12
+        // Spec: caller supplies the digest; token signs it directly; truncation done internally by token.
+        // PrehashSigner accepts the digest bytes and signs without re-hashing.
+        (CKM_ECDSA, CURVE_P256) | (CKM_ECDSA, 0) => {
+            use p256::ecdsa::signature::hazmat::PrehashSigner;
+            let sk = p256::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig: p256::ecdsa::Signature =
+                sk.sign_prehash(msg).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
+        (CKM_ECDSA, CURVE_P384) => {
+            use p384::ecdsa::signature::hazmat::PrehashSigner;
+            let sk = p384::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig: p384::ecdsa::Signature =
+                sk.sign_prehash(msg).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
+        (CKM_ECDSA, CURVE_K256) => {
+            use k256::ecdsa::signature::hazmat::PrehashSigner;
+            let sk = k256::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig: k256::ecdsa::Signature =
+                sk.sign_prehash(msg).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
         _ => Err(CKR_MECHANISM_INVALID),
     }
 }
@@ -966,6 +993,33 @@ pub fn verify_ecdsa(
             };
             vk.verify_prehash(&hash, &sig)
                 .map_err(|_| CKR_SIGNATURE_INVALID)
+        }
+        // CKM_ECDSA raw (pre-hashed) — PKCS#11 v3.2 §6.3.12
+        // Spec: caller supplies the digest; token verifies it directly; truncation done internally by token.
+        // PrehashVerifier accepts the digest bytes and verifies without re-hashing.
+        (CKM_ECDSA, CURVE_P256) | (CKM_ECDSA, 0) => {
+            use p256::ecdsa::signature::hazmat::PrehashVerifier;
+            let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p256::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            vk.verify_prehash(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+        }
+        (CKM_ECDSA, CURVE_P384) => {
+            use p384::ecdsa::signature::hazmat::PrehashVerifier;
+            let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p384::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            vk.verify_prehash(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+        }
+        (CKM_ECDSA, CURVE_K256) => {
+            use k256::ecdsa::signature::hazmat::PrehashVerifier;
+            let vk = k256::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                k256::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            vk.verify_prehash(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
         }
         _ => Err(CKR_MECHANISM_INVALID),
     }
