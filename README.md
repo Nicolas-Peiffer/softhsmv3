@@ -553,6 +553,10 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
   - [x] C++ + Rust: XMSS/XMSS^MT registered in `C_GetMechanismInfo` with `CKF_SIGN | CKF_VERIFY`
   - [x] Rust: `Sha256_192`, `Shake256_256`, `Shake256_192` hash type dispatch in LMS keygen
   - [x] NIST ACVP LMS sigVer: 320/320 demo vectors validated (all 80 parameter combinations)
+- [x] Phase 16: BIP32 child derive params layout fix for Ed25519/SLIP-0010 (v0.4.13)
+  - [x] Rust: `C_DeriveKey` BIP32 child branch now reads `flags` from offset 0 and `index` from offset 4 (matches TS `buildBIP32ChildDeriveParams` layout)
+  - [x] Previous off-by-one read (offset 4/8) caused Ed25519 non-hardened check to misfire → `CKR_MECHANISM_PARAM_INVALID` on first Solana child derive
+  - [x] All 4 Solana SLIP-0010 path segments now derive correctly; addresses match JS reference
 - [x] Phase 15: BIP32 `CKA_EXTRACTABLE` template compliance (v0.4.12)
   - [x] Rust: `C_DeriveKey` BIP32 dispatch now reads `CKA_EXTRACTABLE` from caller's template (per §5.18.5 general rules)
   - [x] Rust: Derived keys honour caller-specified extractability instead of hardcoding `sensitive=true`

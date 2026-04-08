@@ -3138,8 +3138,11 @@ pub fn C_DeriveKey(
                 if p_param.is_null() {
                     return CKR_ARGUMENTS_BAD;
                 }
-                let flags = *p_param.add(1);
-                let index = *p_param.add(2);
+                // CK_BIP32_CHILD_DERIVE_PARAMS layout (TS buildBIP32ChildDeriveParams):
+                //   offset 0: flags (CK_ULONG — non-zero = hardened)
+                //   offset 4: index (CK_ULONG — child index, 0-based, no hardened bit)
+                let flags = *p_param.add(0);
+                let index = *p_param.add(1);
                 
                 match crate::crypto::derive_child_node(&parent_priv, &parent_chain_code, index, flags != 0, curve) {
                     Ok(res) => res,
