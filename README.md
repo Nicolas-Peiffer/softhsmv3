@@ -217,9 +217,13 @@ C_WrapKeyAuthenticated()
 C_UnwrapKeyAuthenticated()
 ```
 
-### Classical Signatures — SHA-3 variants
+### Classical Signatures — ECDSA
 
 ```c
+// ECDSA raw (pre-hashed) — PKCS#11 v3.2 §6.3.12 — caller supplies digest, token does not hash
+// Supported by both C++ and Rust engines; required for Bitcoin/secp256k1 workflows
+CKM_ECDSA                  = 0x00001041  // P-256, P-384, secp256k1 (K-256)
+
 // ECDSA with SHA-2/SHA-3 pre-hash (C++ and Rust engines)
 CKM_ECDSA_SHA256           = 0x00001044
 CKM_ECDSA_SHA384           = 0x00001045
@@ -372,7 +376,7 @@ Multi-part, admin, and async stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The brow
 
 > **Note:** RSA-SHA3 variants (`CKM_RSA_SHA3_*_PKCS`, `CKM_RSA_SHA3_*_PKCS_PSS`) and ECDH1 with X9.63 KDF are C++ engine only.
 
-**63 mechanisms** registered in `C_GetMechanismList` — 100% have implementations.
+**64 mechanisms** registered in `C_GetMechanismList` — 100% have implementations.
 
 ### PKCS#11 v3.2 Compliance Enforcement
 
@@ -549,6 +553,12 @@ Internal state uses thread-local `RefCell<HashMap<u32, HashMap<u32, Vec<u8>>>>` 
   - [x] C++ + Rust: XMSS/XMSS^MT registered in `C_GetMechanismInfo` with `CKF_SIGN | CKF_VERIFY`
   - [x] Rust: `Sha256_192`, `Shake256_256`, `Shake256_192` hash type dispatch in LMS keygen
   - [x] NIST ACVP LMS sigVer: 320/320 demo vectors validated (all 80 parameter combinations)
+- [x] Phase 14: CKM_ECDSA raw (pre-hashed) Rust engine parity (v0.4.11)
+  - [x] Rust: `CKM_ECDSA` (0x1041) constant + `SUPPORTED_MECHS` entry — PKCS#11 v3.2 §6.3.12
+  - [x] Rust: `sign_ecdsa` — `PrehashSigner` arms for P-256 (`CURVE_P256`), P-384 (`CURVE_P384`), secp256k1 (`CURVE_K256`)
+  - [x] Rust: `verify_ecdsa` — `PrehashVerifier` arms for P-256, P-384, secp256k1
+  - [x] Rust: `C_Sign` and `C_Verify` dispatch extended to include `CKM_ECDSA`
+  - [x] Rust engine at full parity with C++ engine for raw ECDSA (64 total PKCS#11 mechanisms)
 - [x] Phase 13: PKCS#11 v3.2 attribute compliance audit + Rust engine API completeness (v0.4.10)
   - [x] Rust: `CKM_ECDSA_SHA512` (0x1046) — FIPS 186-5 §6.4 prehash truncation for P-256/P-384
   - [x] Rust: Message Encrypt/Decrypt API — 10 functions (`C_MessageEncryptInit` through `C_MessageDecryptFinal`), AES-GCM per-message AEAD
