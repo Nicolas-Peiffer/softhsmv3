@@ -12,6 +12,8 @@ use crate::crypto::*;
 use crate::state::*;
 use crate::slh_dsa_keygen;
 use rand::SeedableRng;
+use fips204::traits::SerDes;
+use fips205::traits::SerDes as _;
 use rand::rngs::OsRng;
 
 /// ACVP-aware RNG selection macro.
@@ -615,12 +617,6 @@ pub fn C_GenerateKeyPair(
                     CKA_PARAMETER_SET,
                 )
                 .unwrap_or(CKP_ML_DSA_65);
-                let mut seed_bytes = [0u8; 32];
-                if getrandom::getrandom(&mut seed_bytes).is_err() {
-                    return CKR_FUNCTION_FAILED;
-                }
-                let seed: ml_dsa::Seed = seed_bytes.into();
-                seed_bytes.zeroize();
                 let mut pub_attrs = HashMap::new();
                 let mut prv_attrs = HashMap::new();
                 store_param_set(&mut pub_attrs, ps);
@@ -666,25 +662,34 @@ pub fn C_GenerateKeyPair(
 
                 match ps {
                     CKP_ML_DSA_44 => {
-                        let sk = ml_dsa::SigningKey::<ml_dsa::MlDsa44>::from_seed(&seed);
-                        let vk = sk.verifying_key();
-                        pub_attrs.insert(CKA_VALUE, vk.encode().as_slice().to_vec());
-                        #[allow(deprecated)]
-                        prv_attrs.insert(CKA_VALUE, sk.to_expanded().as_slice().to_vec());
+                        let mut rng = rand::rngs::OsRng;
+                        match fips204::ml_dsa_44::try_keygen_with_rng(&mut rng) {
+                            Ok((vk, sk)) => {
+                                pub_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(vk).to_vec());
+                                prv_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(sk).to_vec());
+                            }
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        }
                     }
                     CKP_ML_DSA_65 => {
-                        let sk = ml_dsa::SigningKey::<ml_dsa::MlDsa65>::from_seed(&seed);
-                        let vk = sk.verifying_key();
-                        pub_attrs.insert(CKA_VALUE, vk.encode().as_slice().to_vec());
-                        #[allow(deprecated)]
-                        prv_attrs.insert(CKA_VALUE, sk.to_expanded().as_slice().to_vec());
+                        let mut rng = rand::rngs::OsRng;
+                        match fips204::ml_dsa_65::try_keygen_with_rng(&mut rng) {
+                            Ok((vk, sk)) => {
+                                pub_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(vk).to_vec());
+                                prv_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(sk).to_vec());
+                            }
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        }
                     }
                     CKP_ML_DSA_87 => {
-                        let sk = ml_dsa::SigningKey::<ml_dsa::MlDsa87>::from_seed(&seed);
-                        let vk = sk.verifying_key();
-                        pub_attrs.insert(CKA_VALUE, vk.encode().as_slice().to_vec());
-                        #[allow(deprecated)]
-                        prv_attrs.insert(CKA_VALUE, sk.to_expanded().as_slice().to_vec());
+                        let mut rng = rand::rngs::OsRng;
+                        match fips204::ml_dsa_87::try_keygen_with_rng(&mut rng) {
+                            Ok((vk, sk)) => {
+                                pub_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(vk).to_vec());
+                                prv_attrs.insert(CKA_VALUE, fips204::traits::SerDes::into_bytes(sk).to_vec());
+                            }
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        }
                     }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
@@ -770,40 +775,40 @@ pub fn C_GenerateKeyPair(
 
                 match ps {
                     CKP_SLH_DSA_SHA2_128S => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_128s, 16, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_128s::try_keygen_with_rng, 16, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_128S => {
-                        slh_dsa_keygen!(slh_dsa::Shake128s, 16, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_128s::try_keygen_with_rng, 16, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHA2_128F => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_128f, 16, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_128f::try_keygen_with_rng, 16, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_128F => {
-                        slh_dsa_keygen!(slh_dsa::Shake128f, 16, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_128f::try_keygen_with_rng, 16, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHA2_192S => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_192s, 24, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_192s::try_keygen_with_rng, 24, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_192S => {
-                        slh_dsa_keygen!(slh_dsa::Shake192s, 24, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_192s::try_keygen_with_rng, 24, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHA2_192F => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_192f, 24, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_192f::try_keygen_with_rng, 24, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_192F => {
-                        slh_dsa_keygen!(slh_dsa::Shake192f, 24, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_192f::try_keygen_with_rng, 24, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHA2_256S => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_256s, 32, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_256s::try_keygen_with_rng, 32, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_256S => {
-                        slh_dsa_keygen!(slh_dsa::Shake256s, 32, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_256s::try_keygen_with_rng, 32, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHA2_256F => {
-                        slh_dsa_keygen!(slh_dsa::Sha2_256f, 32, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_sha2_256f::try_keygen_with_rng, 32, pub_attrs, prv_attrs)
                     }
                     CKP_SLH_DSA_SHAKE_256F => {
-                        slh_dsa_keygen!(slh_dsa::Shake256f, 32, pub_attrs, prv_attrs)
+                        slh_dsa_keygen!(fips205::slh_dsa_shake_256f::try_keygen_with_rng, 32, pub_attrs, prv_attrs)
                     }
                     _ => return CKR_ARGUMENTS_BAD,
                 }
@@ -1943,35 +1948,12 @@ pub fn C_Sign(
         let msg = std::slice::from_raw_parts(p_data, ul_data_len as usize);
         let ps = get_object_param_set(hkey);
 
-        // Pre-hash dispatch: CKM_HASH_ML_DSA_* and CKM_HASH_SLH_DSA_* hash msg first,
         // then sign the digest as if it were plain CKM_ML_DSA / CKM_SLH_DSA.
-        let eff_mech: u32;
-        let hash_buf: Vec<u8>;
-        let eff_msg: &[u8];
-        if is_prehash_ml_dsa(mech) {
-            hash_buf = match prehash_message(mech, msg) {
-                Some(h) => h,
-                None => return CKR_MECHANISM_INVALID,
-            };
-            eff_mech = CKM_ML_DSA;
-            eff_msg = &hash_buf;
-        } else if is_prehash_slh_dsa(mech) {
-            hash_buf = match prehash_message(mech, msg) {
-                Some(h) => h,
-                None => return CKR_MECHANISM_INVALID,
-            };
-            eff_mech = CKM_SLH_DSA;
-            eff_msg = &hash_buf;
-        } else {
-            hash_buf = Vec::new();
-            eff_mech = mech;
-            eff_msg = msg;
-        }
-        let _ = &hash_buf; // suppress unused warning when pre-hash path not taken
-
+        let eff_mech = mech;
+        let eff_msg = msg;
         let result = match eff_mech {
-            CKM_ML_DSA => sign_ml_dsa(ps, &sk_bytes, eff_msg),
-            CKM_SLH_DSA => sign_slh_dsa(ps, &sk_bytes, eff_msg, &ctx_bytes, deterministic),
+            m if m == CKM_ML_DSA || is_prehash_ml_dsa(m) => sign_ml_dsa(m, ps, &sk_bytes, msg),
+            m if m == CKM_SLH_DSA || is_prehash_slh_dsa(m) => sign_slh_dsa(m, ps, &sk_bytes, msg, &ctx_bytes, deterministic),
             CKM_SHA256_HMAC | CKM_SHA384_HMAC | CKM_SHA512_HMAC | CKM_SHA3_256_HMAC
             | CKM_SHA3_512_HMAC => sign_hmac(eff_mech, &sk_bytes, eff_msg),
             CKM_KMAC_128 | CKM_KMAC_256 => sign_kmac(eff_mech, &sk_bytes, eff_msg),
@@ -2091,33 +2073,11 @@ pub fn C_Verify(
         let ps = get_object_param_set(hkey);
 
         // Pre-hash dispatch: same logic as C_Sign
-        let eff_mech: u32;
-        let hash_buf: Vec<u8>;
-        let eff_msg: &[u8];
-        if is_prehash_ml_dsa(mech) {
-            hash_buf = match prehash_message(mech, msg) {
-                Some(h) => h,
-                None => return CKR_MECHANISM_INVALID,
-            };
-            eff_mech = CKM_ML_DSA;
-            eff_msg = &hash_buf;
-        } else if is_prehash_slh_dsa(mech) {
-            hash_buf = match prehash_message(mech, msg) {
-                Some(h) => h,
-                None => return CKR_MECHANISM_INVALID,
-            };
-            eff_mech = CKM_SLH_DSA;
-            eff_msg = &hash_buf;
-        } else {
-            hash_buf = Vec::new();
-            eff_mech = mech;
-            eff_msg = msg;
-        }
-        let _ = &hash_buf;
-
+        let eff_mech = mech;
+        let eff_msg = msg;
         let rv = match match eff_mech {
-            CKM_ML_DSA => verify_ml_dsa(ps, &pk_bytes, eff_msg, sig_bytes),
-            CKM_SLH_DSA => verify_slh_dsa(ps, &pk_bytes, eff_msg, sig_bytes, &ctx_bytes),
+            m if m == CKM_ML_DSA || is_prehash_ml_dsa(m) => verify_ml_dsa(m, ps, &pk_bytes, msg, sig_bytes),
+            m if m == CKM_SLH_DSA || is_prehash_slh_dsa(m) => verify_slh_dsa(m, ps, &pk_bytes, msg, sig_bytes, &ctx_bytes),
             CKM_SHA256_HMAC | CKM_SHA384_HMAC | CKM_SHA512_HMAC | CKM_SHA3_256_HMAC
             | CKM_SHA3_512_HMAC => verify_hmac(eff_mech, &pk_bytes, eff_msg, sig_bytes),
             CKM_KMAC_128 | CKM_KMAC_256 => match sign_kmac(eff_mech, &pk_bytes, eff_msg) {
@@ -3082,6 +3042,83 @@ pub fn C_DeriveKey(
             if !can_derive {
                 return CKR_KEY_FUNCTION_NOT_PERMITTED;
             }
+        }
+
+        
+        if mech_type == CKM_SP800_108_COUNTER_KDF || mech_type == CKM_SP800_108_FEEDBACK_KDF {
+            let key_bytes = match get_object_value(h_base_key) {
+                Some(v) => v,
+                None => return CKR_OBJECT_HANDLE_INVALID,
+            };
+            if p_mechanism.is_null() {
+                return CKR_ARGUMENTS_BAD;
+            }
+            let p_param = *(p_mechanism.add(4) as *const u32) as usize as *const u32;
+            let ul_param_len = *(p_mechanism.add(8) as *const u32);
+            if p_param.is_null() || ul_param_len < 12 {
+                return CKR_ARGUMENTS_BAD;
+            }
+            // CK_SP800_108_KDF_PARAMS layout:
+            // prfHashMechanism (4), pContext (4), ulContextLen (4), pLabel (4), ulLabelLen (4)
+            let prf_mech = unsafe { *p_param.add(0) };
+            let ptr_ctx = unsafe { *p_param.add(1) as usize as *const u8 };
+            let len_ctx = unsafe { *p_param.add(2) as usize };
+            let ptr_label = unsafe { *p_param.add(3) as usize as *const u8 };
+            let len_label = unsafe { *p_param.add(4) as usize };
+
+            let ctx = if !ptr_ctx.is_null() && len_ctx > 0 {
+                unsafe { std::slice::from_raw_parts(ptr_ctx, len_ctx) }
+            } else { b"" };
+            let label = if !ptr_label.is_null() && len_label > 0 {
+                unsafe { std::slice::from_raw_parts(ptr_label, len_label) }
+            } else { b"" };
+
+            let mut out = Vec::with_capacity(key_len);
+            let l_bits = (key_len as u32) * 8;
+            
+            let ok = match prf_mech {
+                CKM_SHA256_HMAC => {
+                    use hmac::{Hmac, Mac};
+                    let mut i = 1u32;
+                    while out.len() < key_len {
+                        if let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(&key_bytes) {
+                            mac.update(&i.to_be_bytes());
+                            if !label.is_empty() { mac.update(label); }
+                            mac.update(&[0x00]);
+                            if !ctx.is_empty() { mac.update(ctx); }
+                            mac.update(&l_bits.to_be_bytes());
+                            let res = mac.finalize().into_bytes();
+                            let chunk = std::cmp::min(res.len(), key_len - out.len());
+                            out.extend_from_slice(&res[..chunk]);
+                            i += 1;
+                        } else { break; }
+                    }
+                    out.len() == key_len
+                }
+                _ => return CKR_MECHANISM_INVALID,
+            };
+            if !ok {
+                return CKR_FUNCTION_FAILED;
+            }
+            let mut extractable = false;
+            let tmpl_ptr = p_template as *mut u32;
+            for i in 0..ul_attribute_count {
+                let attr_type = unsafe { *tmpl_ptr.add((i * 3) as usize) };
+                let val_ptr = unsafe { *tmpl_ptr.add((i * 3 + 1) as usize) as usize as *const u8 };
+                let val_len = unsafe { *tmpl_ptr.add((i * 3 + 2) as usize) };
+                if attr_type == CKA_EXTRACTABLE && !val_ptr.is_null() && val_len == 1 {
+                    extractable = unsafe { *val_ptr != 0 };
+                }
+            }
+            let mut attrs = std::collections::HashMap::new();
+            attrs.insert(CKA_CLASS, CKO_SECRET_KEY.to_le_bytes().to_vec());
+            attrs.insert(CKA_KEY_TYPE, CKK_GENERIC_SECRET.to_le_bytes().to_vec());
+            attrs.insert(CKA_VALUE, out);
+            attrs.insert(CKA_VALUE_LEN, (key_len as u32).to_le_bytes().to_vec());
+            attrs.insert(CKA_EXTRACTABLE, vec![extractable as u8]);
+            let handle = crate::state::allocate_handle(attrs);
+            unsafe { *ph_key = handle; }
+            return CKR_OK;
         }
 
         if mech_type == CKM_BIP32_MASTER_DERIVE || mech_type == CKM_BIP32_CHILD_DERIVE {
