@@ -37,6 +37,7 @@
 #include "AESKey.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <cstdint>
 
 // Constructor
 P11Attribute::P11Attribute(OSObject* inobject)

@@ -47,6 +47,7 @@
 #include "ECPrivateKey.h"
 #include "SymmetricAlgorithm.h"
 #include "AESKey.h"
+#include <cstdint>
 
 static bool isSymMechanism(CK_MECHANISM_PTR pMechanism)
 {

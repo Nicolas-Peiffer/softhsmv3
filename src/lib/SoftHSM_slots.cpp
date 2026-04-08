@@ -51,6 +51,7 @@
 #include "SlotManager.h"
 #include "odd.h"
 #include "vendor_mechanisms.h"
+#include <cstdint>
 
 #if defined(WITH_OPENSSL)
 #include "OSSLCryptoFactory.h"
