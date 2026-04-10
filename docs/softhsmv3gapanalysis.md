@@ -13,17 +13,16 @@ Comparing the **Utimaco Quantum Protect HSM Simulator** (free, proprietary, nati
 | **ML-KEM** (FIPS 203) | 512/768/1024 | 512/768/1024 | **Parity** |
 | **ML-DSA** (FIPS 204) | 44/65/87 | 44/65/87 + 10 pre-hash variants | **softhsmv3 leads** (pre-hash) |
 | **SLH-DSA** (FIPS 205) | Not yet (roadmap) | All 12 param sets + 10 pre-hash | **softhsmv3 leads** |
-| **LMS** (SP 800-208) | Yes | No | **GAP: softhsmv3 missing** |
-| **HSS** (hierarchical LMS) | Yes | No | **GAP: softhsmv3 missing** |
-| **XMSS** | Yes | No | **GAP: softhsmv3 missing** |
-| **XMSS-MT** | Yes | No | **GAP: softhsmv3 missing** |
+| **LMS/HSS** (SP 800-208) | Yes | Yes (C++ engine; Rust engine via `hbs-lms`) | **Parity** |
+| **XMSS** | Yes | Yes (C++ engine; Rust engine via `xmss` crate — single-tree only) | **Parity (single-tree)** |
+| **XMSS-MT** | Yes | Yes (C++ engine); **No** (Rust engine — crate limitation) | **GAP: Rust WASM XMSS-MT missing** |
 | **HQC** | Roadmap | No | Neither has it |
 | **FrodoKEM** | Roadmap | No | Neither has it |
 | **Classic McEliece** | Roadmap | No | Neither has it |
 
 ### Summary
-- **Utimaco advantage**: Stateful hash-based signatures (LMS/HSS/XMSS/XMSS-MT) — these are NIST-standardized (SP 800-208) and critical for firmware signing, code signing, and long-lived key scenarios
-- **softhsmv3 advantage**: SLH-DSA (Utimaco doesn't have it yet), plus pre-hash variants for ML-DSA/SLH-DSA (PKCS#11 v3.2 compliance)
+- **softhsmv3 advantage**: SLH-DSA (Utimaco doesn't have it yet), pre-hash variants for ML-DSA/SLH-DSA (PKCS#11 v3.2 compliance), and stateful hash-based signatures (LMS/HSS/XMSS in both engines; XMSS-MT in C++ engine only)
+- **Remaining gap**: XMSS-MT in the Rust WASM engine (the `xmss` crate only supports single-tree XMSS)
 
 ---
 
@@ -115,18 +114,13 @@ Comparing the **Utimaco Quantum Protect HSM Simulator** (free, proprietary, nati
 
 ### HIGH — Missing from softhsmv3 that Utimaco has
 
-1. **LMS/HSS stateful hash-based signatures** (SP 800-208)
-   - Used for firmware signing, code signing, long-lived credentials
-   - NIST-standardized, required by NSA CNSA 2.0 suite
-   - OpenSSL 3.x has no native support — would need liboqs or custom implementation
-   - Relevant PKCS#11 v3.2 types: `CKK_HSS`, `CKM_HSS`, `CKM_HSS_KEY_PAIR_GEN`
+1. **XMSS-MT in the Rust WASM engine**
+   - The C++ engine fully supports XMSS-MT keygen/sign/verify
+   - The `xmss` Rust crate (`0.1.0-pre.0`) only supports single-tree XMSS, not multi-tree
+   - Blocks dual-engine parity verification for XMSS-MT
+   - Relevant PKCS#11 v3.2 type: `CKK_XMSSMT` (`0x48`)
 
-2. **XMSS/XMSS-MT stateful hash-based signatures** (RFC 8391)
-   - Similar use case to LMS; preferred by some European standards bodies
-   - OpenSSL 3.x has no native support
-   - Relevant PKCS#11 v3.2 types: `CKK_XMSS`, `CKK_XMSSMT`, `CKM_XMSS_KEY_PAIR_GEN`
-
-3. **Ed448 curve support** (EdDSA)
+2. **Ed448 curve support** (EdDSA)
    - Commonly supported alongside Ed25519
    - OpenSSL 3.x supports it — straightforward addition
 
@@ -173,14 +167,12 @@ Comparing the **Utimaco Quantum Protect HSM Simulator** (free, proprietary, nati
 
 **Focus areas for closing gaps (if desired):**
 
-1. **LMS/HSS** — Highest-value gap. Required by CNSA 2.0. Would need liboqs integration or a standalone WASM implementation (conflicts with OpenSSL-only design philosophy). Consider as a Phase 7+ feature.
+1. **XMSS-MT in Rust engine** — The C++ engine already has it. Track the `xmss` crate for multi-tree support; alternatively implement XMSS-MT directly via the reference C library compiled to WASM via `cc` crate.
 
-2. **XMSS** — Same category as LMS. Consider bundling with LMS work.
+2. **Ed448** — Low-hanging fruit. OpenSSL supports it. Quick win.
 
-3. **Ed448** — Low-hanging fruit. OpenSSL supports it. Quick win.
+3. **Multi-slot** — Moderate effort. Would enhance the educational HSM simulation significantly.
 
-4. **Multi-slot** — Moderate effort. Would enhance the educational HSM simulation significantly.
-
-5. **Audit log** — Simple feature. Log PKCS#11 calls to a buffer. Display in UI.
+4. **Audit log** — Simple feature. Log PKCS#11 calls to a buffer. Display in UI.
 
 **Do NOT pursue:** RBAC/MFA, firmware simulation, multi-tenant isolation, cluster support — these are enterprise features that add complexity without educational value in a browser HSM simulator.

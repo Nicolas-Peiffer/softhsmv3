@@ -129,9 +129,16 @@ via `C_DeriveKey`. All use OpenSSL EVP KDF / `EVP_PKEY_CTX` APIs — no legacy p
 
 ## 3. Known limitations
 
-- **Stateful hash-based signatures (HSS, XMSS) are not implemented.** These algorithms require
-  persistent, monotonically increasing counters external to the HSM; the in-memory token cannot
-  provide the required durability guarantees.
+- **Stateful hash-based signatures (HSS/LMS, XMSS, XMSS-MT) are fully implemented** in the C++
+  engine via embedded reference libraries (`stateful/hash-sigs/` for HSS/LMS,
+  `stateful/xmss-reference/` for XMSS and XMSS-MT). The Rust WASM engine supports HSS/LMS
+  (via `hbs-lms`) and single-tree XMSS (via `xmss` crate); **XMSS-MT is not yet available in
+  the Rust engine** due to a crate limitation.
+
+  Key exhaustion: once all one-time signing slots are consumed, `C_Sign` returns
+  `CKR_KEY_EXHAUSTED`. The remaining-use counter is tracked in `CKA_HSS_KEYS_REMAINING`
+  (`0x61c`) but is not persisted across process/WASM restarts. To survive a reload, export
+  the private key with `C_GetAttributeValue(CKA_VALUE)` and re-import on next session.
 
 - **Single-threaded WASM build.** The Emscripten target does not use a SharedArrayBuffer worker
   pool. Crypto-intensive operations (especially SLH-DSA-SHA2-256s key generation and signing)

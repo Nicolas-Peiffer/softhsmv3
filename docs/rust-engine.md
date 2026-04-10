@@ -55,7 +55,7 @@ ecosystem. No OpenSSL, no system libraries, no native bindings.
 | `signature` | 3.0.0-rc.10 | Signature traits |
 | `getrandom` | 0.2.17 (js) | WASM-compatible CSPRNG (uses browser `crypto.getRandomValues`) |
 | `zeroize` | 1 | Secure memory zeroization |
-| `wasm-bindgen` | 0.2.92 | JS/WASM bridge |
+| `wasm-bindgen` | 0.2.117 | JS/WASM bridge |
 
 ---
 
@@ -200,6 +200,9 @@ export const getSoftHSMRustModule = async (): Promise<SoftHSMModule> => {
 | ML-DSA pre-hash (10 variants) | ✅ | ⚠️ Partial | Rust ml-dsa crate does not yet expose pre-hash API |
 | SLH-DSA (all 12 param sets, pure) | ✅ | ✅ | |
 | SLH-DSA pre-hash | ✅ | ⚠️ Partial | slh-dsa crate pre-hash support pending |
+| HSS/LMS (SP 800-208) | ✅ | ✅ | Rust via `hbs-lms` crate |
+| XMSS single-tree (RFC 8391) | ✅ | ✅ | Rust via `xmss` crate |
+| XMSS-MT | ✅ | ❌ Not implemented | `xmss` crate lacks multi-tree support |
 | RSA-2048/3072/4096 | ✅ | ✅ | |
 | ECDSA P-256, P-384 | ✅ | ✅ | |
 | Ed25519 | ✅ | ✅ | |
@@ -225,8 +228,9 @@ export const getSoftHSMRustModule = async (): Promise<SoftHSMModule> => {
 - **No ML-DSA / SLH-DSA pre-hash in Rust** — the `ml-dsa` and `slh-dsa` RustCrypto crates
   (rc versions) do not yet expose a pre-hash signing API. The C++ engine uses OpenSSL's
   `OSSL_PARAM_utf8_string("digest", ...)` pattern which has no direct equivalent.
-- **No stateful hash-based signatures** — same constraint as C++ engine (persistent counters
-  incompatible with non-persistent WASM memory).
+- **XMSS-MT not supported in Rust engine** — the `xmss` crate (`0.1.0-pre.0`) only exposes
+  single-tree XMSS. HSS/LMS is supported via `hbs-lms`; single-tree XMSS is supported via
+  `xmss`. Use XMSS (single-tree) or HSS/LMS in the Rust engine; XMSS-MT requires the C++ engine.
 - **No ECDSA-SHA3 variants** — `p256`/`p384` crates support standard ECDSA; SHA-3 prehash
   requires manual digest + raw signature, not yet wired.
 - **No SP 800-108 KDFs or ECDH cofactor** — not available as standalone crates; would
