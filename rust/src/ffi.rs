@@ -1324,6 +1324,17 @@ pub fn C_GenerateKeyPair(
                     prv_attrs.insert(CKA_VALUE, sk_bytes);
                     let spki = build_x448_spki(&pk_bytes);
                     pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                    // PKCS#11 v3.2 §6.7 — CKA_EC_PARAMS required on CKK_EC_MONTGOMERY keys;
+                    // store DER OID for id-X448 (RFC 8410, OID 1.3.101.111 = 06 03 2b 65 6f)
+                    let oid_x448: Vec<u8> = vec![0x06, 0x03, 0x2b, 0x65, 0x6f];
+                    pub_attrs.insert(CKA_EC_PARAMS, oid_x448.clone());
+                    prv_attrs.insert(CKA_EC_PARAMS, oid_x448);
+                    // PKCS#11 v3.2 §6.7 — CKA_EC_POINT: DER OCTET STRING wrapping raw 56-byte public key
+                    let mut ec_point_x448 = Vec::with_capacity(2 + pk_bytes.len());
+                    ec_point_x448.push(0x04u8); // DER OCTET STRING tag
+                    ec_point_x448.push(pk_bytes.len() as u8); // 0x38 = 56
+                    ec_point_x448.extend_from_slice(&pk_bytes);
+                    pub_attrs.insert(CKA_EC_POINT, ec_point_x448);
                 } else {
                     // X25519 — 32-byte keys (RFC 8410, OID 1.3.101.110)
                     let sk = with_rng!(rng, {
@@ -1338,6 +1349,17 @@ pub fn C_GenerateKeyPair(
                     prv_attrs.insert(CKA_VALUE, sk_bytes);
                     let spki = build_x25519_spki(&pk_bytes);
                     pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                    // PKCS#11 v3.2 §6.7 — CKA_EC_PARAMS required on CKK_EC_MONTGOMERY keys;
+                    // store DER OID for id-X25519 (RFC 8410, OID 1.3.101.110 = 06 03 2b 65 6e)
+                    let oid_x25519: Vec<u8> = vec![0x06, 0x03, 0x2b, 0x65, 0x6e];
+                    pub_attrs.insert(CKA_EC_PARAMS, oid_x25519.clone());
+                    prv_attrs.insert(CKA_EC_PARAMS, oid_x25519);
+                    // PKCS#11 v3.2 §6.7 — CKA_EC_POINT: DER OCTET STRING wrapping raw 32-byte public key
+                    let mut ec_point_x25519 = Vec::with_capacity(2 + pk_bytes.len());
+                    ec_point_x25519.push(0x04u8); // DER OCTET STRING tag
+                    ec_point_x25519.push(pk_bytes.len() as u8); // 0x20 = 32
+                    ec_point_x25519.extend_from_slice(&pk_bytes);
+                    pub_attrs.insert(CKA_EC_POINT, ec_point_x25519);
                 }
 
                 absorb_template_attrs(
