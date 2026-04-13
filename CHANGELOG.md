@@ -8,7 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.21] — 2026-04-12
+
 ### Fixed
+
+- **ACVP Compliance**: Eliminated 22 residual ACVP SKIP tests.
+  - Rust Engine: Implemented custom SHAKE-256 N32 verifier in `lms.rs` to support SP 800-208 SHAKE type IDs, eliminating 20 LMS SHAKE skips.
+  - C++ Engine: Implemented `CKM_EDDSA_PH` (Ed25519ph) utilizing OpenSSL's `EVP_DigestSignInit_ex` for pre-hashed EdDSA algorithms, passing the Ed25519ph functional tests.
+  - C++ Engine: Converted SLH-DSA SigGen KAT from SKIP to an active signed+verified round-trip test.
 
 - **Rust: `CKA_EC_PARAMS` and `CKA_EC_POINT` now stored on generated X25519/X448 keys** — PKCS#11
   v3.2 §6.7 requires both attributes on `CKK_EC_MONTGOMERY` keys. Previously only attributes
@@ -20,26 +29,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **X25519**: `CKA_EC_PARAMS` = `06 03 2b 65 6e` (id-X25519, OID 1.3.101.110);
     `CKA_EC_POINT` = `04 20 <32-byte raw public key>`
 
-- **Rust: stale SP 800-108 early-dispatch path removed** — `C_DeriveKey` contained a
-  dead early-return block that parsed `CK_SP800_108_KDF_PARAMS` with an incorrect field layout
-  (treating `ulNumberOfDataParams` as `pContext`, `pDataParams` as `ulContextLen`, etc.) and only
-  matched `CKM_SHA256_HMAC` as PRF, causing `CKR_MECHANISM_INVALID` whenever callers passed
-  `CKM_SHA256` as the PRF mechanism. The correct implementation — proper `pDataParams` iteration,
-  `CKM_SHA256` default PRF, `CK_SP800_108_ITERATION_VARIABLE` counter support — already existed
-  in the main `match` block at `CKM_SP800_108_COUNTER_KDF` / `CKM_SP800_108_FEEDBACK_KDF`. The
-  stale path has been removed; execution now always reaches the correct handlers. WASM binary
-  updated accordingly (`rust/pkg_bundler/softhsmrustv3_bg.wasm`).
-
----
-
-## [0.4.21] — 2026-04-12
-
-### Fixed
-
-- **ACVP Compliance**: Eliminated 22 residual ACVP SKIP tests.
-  - Rust Engine: Implemented custom SHAKE-256 N32 verifier in `lms.rs` to support SP 800-208 SHAKE type IDs, eliminating 20 LMS SHAKE skips.
-  - C++ Engine: Implemented `CKM_EDDSA_PH` (Ed25519ph) utilizing OpenSSL's `EVP_DigestSignInit_ex` for pre-hashed EdDSA algorithms, passing the Ed25519ph functional tests.
-  - C++ Engine: Converted SLH-DSA SigGen KAT from SKIP to an active signed+verified round-trip test.
+- **Rust: stale SP 800-108 early-dispatch path removed from `C_DeriveKey`** — a dead early-return
+  block parsed `CK_SP800_108_KDF_PARAMS` with an incorrect field layout and only matched
+  `CKM_SHA256_HMAC` as PRF, causing `CKR_MECHANISM_INVALID` for callers passing `CKM_SHA256`. The
+  correct implementation already existed in the main `match` block at `CKM_SP800_108_COUNTER_KDF` /
+  `CKM_SP800_108_FEEDBACK_KDF`; the stale path has been removed. WASM binary updated.
 
 ### Changed
 
