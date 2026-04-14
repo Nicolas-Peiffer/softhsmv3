@@ -3420,11 +3420,21 @@ pub fn C_DeriveKey(
                 let peer_pk_raw = std::slice::from_raw_parts(peer_pk_ptr, peer_pk_len);
                 // Strip DER OCTET STRING wrapper if present: 0x04 <len> <point bytes>
                 // PKCS#11 v3.2 §2.3.5 allows either raw SEC1 or the DER-wrapped form.
-                let peer_pk_bytes: &[u8] = if peer_pk_raw.len() >= 3
-                    && peer_pk_raw[0] == 0x04
-                    && (peer_pk_raw[1] as usize) + 2 == peer_pk_raw.len()
-                {
-                    &peer_pk_raw[2..]
+                let peer_pk_bytes: &[u8] = if peer_pk_raw.len() >= 3 && peer_pk_raw[0] == 0x04 {
+                    if (peer_pk_raw[1] as usize) + 2 == peer_pk_raw.len() {
+                        &peer_pk_raw[2..]
+                    } else if peer_pk_raw.len() >= 4 && peer_pk_raw[1] == 0x81 && (peer_pk_raw[2] as usize) + 3 == peer_pk_raw.len() {
+                        &peer_pk_raw[3..]
+                    } else if peer_pk_raw.len() >= 5 && peer_pk_raw[1] == 0x82 {
+                        let len = ((peer_pk_raw[2] as usize) << 8) | (peer_pk_raw[3] as usize);
+                        if len + 4 == peer_pk_raw.len() {
+                            &peer_pk_raw[4..]
+                        } else {
+                            peer_pk_raw
+                        }
+                    } else {
+                        peer_pk_raw
+                    }
                 } else {
                     peer_pk_raw
                 };
@@ -3445,6 +3455,19 @@ pub fn C_DeriveKey(
                             Err(_) => return CKR_ARGUMENTS_BAD,
                         };
                         p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
+                            .raw_secret_bytes()
+                            .to_vec()
+                    }
+                    (ALGO_ECDSA, CURVE_K256) | (0, CURVE_K256) => {
+                        let sk = match k256::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
+                            Ok(s) => s,
+                            Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                        };
+                        let peer_pk = match k256::PublicKey::from_sec1_bytes(peer_pk_bytes) {
+                            Ok(pk) => pk,
+                            Err(_) => return CKR_ARGUMENTS_BAD,
+                        };
+                        k256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
                             .raw_secret_bytes()
                             .to_vec()
                     }
@@ -3539,7 +3562,7 @@ pub fn C_DeriveKey(
 
                 match kdf {
                     0x00000001 /* CKD_NULL */ => {
-                        if key_len <= shared.len() {
+                        if key_len > 0 && key_len < shared.len() {
                             shared[..key_len].to_vec()
                         } else {
                             shared
