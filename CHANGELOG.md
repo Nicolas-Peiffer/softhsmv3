@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.22] — 2026-04-14
+
 ### Added
 
 - **Rust engine: ECDSA P-521 support** — full keygen, sign, verify, and ECDH via `p521` RustCrypto crate (v0.13):
@@ -21,6 +25,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **Rust: EdDSA safety** — replaced `.unwrap()` with `.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)` in `verify_eddsa()` and `verify_eddsa_ph()`; malformed public key bytes now return `CKR_KEY_TYPE_INCONSISTENT` instead of panicking
+
+### Changed
+
+- **Security audit** (`docs/security_audit_04132026.md`): documented CWE-305 / CWE-208 as accepted risks (educational/ACVP design), and flagged CWE-400 (`ffi.rs` `.unwrap()` panics) and CWE-120 (`strncpy` bounds in C++) for future hardening
+- **README / docs/rust-engine.md**: updated algorithm parity tables and Rust crate list to reflect full P-256/P-384/P-521/secp256k1 coverage across both engines
 
 ---
 
