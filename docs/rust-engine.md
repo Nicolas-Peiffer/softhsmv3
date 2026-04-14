@@ -38,6 +38,7 @@ ecosystem. No OpenSSL, no system libraries, no native bindings.
 | `rsa` | 0.9 (sha2) | RSA-2048, RSA-3072, RSA-4096 (PKCS#1 v2.2) |
 | `p256` | 0.13 (ecdsa, ecdh) | ECDSA P-256, ECDH P-256 |
 | `p384` | 0.13 (ecdsa, ecdh) | ECDSA P-384, ECDH P-384 |
+| `p521` | 0.13 (ecdsa, ecdh) | ECDSA P-521, ECDH P-521 |
 | `ed25519-dalek` | 2.1 (rand_core, digest) | Ed25519 signatures (RFC 8032) |
 | `x25519-dalek` | 2.0 (static_secrets) | X25519 key agreement |
 | `aes` | 0.8.3 | AES-128, AES-256 block cipher |
@@ -89,10 +90,10 @@ for functions not yet in the Rust binary.
 | **Session** | `C_OpenSession`, `C_CloseSession`, `C_Login`, `C_Logout`, `C_GetSessionInfo` |
 | **Slot / Token** | `C_GetSlotList`, `C_GetTokenInfo`, `C_GetMechanismList`, `C_GetMechanismInfo`, `C_InitToken`, `C_InitPIN` |
 | **Object** | `C_CreateObject`, `C_DestroyObject`, `C_FindObjectsInit`, `C_FindObjects`, `C_FindObjectsFinal`, `C_GetAttributeValue` |
-| **Key generation** | `C_GenerateKey` (AES-128/256), `C_GenerateKeyPair` (ML-KEM, ML-DSA, SLH-DSA, RSA, ECDSA P-256/P-384, Ed25519) |
+| **Key generation** | `C_GenerateKey` (AES-128/256), `C_GenerateKeyPair` (ML-KEM, ML-DSA, SLH-DSA, RSA, ECDSA P-256/P-384/P-521, Ed25519) |
 | **KEM** | `C_EncapsulateKey`, `C_DecapsulateKey` (ML-KEM-512/768/1024) |
 | **Encrypt / Decrypt** | `C_EncryptInit` + `C_Encrypt` (one-shot), `C_DecryptInit` + `C_Decrypt` (one-shot); mechanisms: AES-GCM, AES-CBC, AES-KW, RSA-OAEP |
-| **Sign / Verify** | `C_SignInit` + `C_Sign` (one-shot), `C_VerifyInit` + `C_Verify` (one-shot), `C_SignMessage` (one-shot), `C_VerifyMessage` (one-shot); algorithms: ML-DSA-44/65/87, SLH-DSA (all 12), RSA-PKCS, RSA-PSS, ECDSA P-256/P-384, Ed25519 |
+| **Sign / Verify** | `C_SignInit` + `C_Sign` (one-shot), `C_VerifyInit` + `C_Verify` (one-shot), `C_SignMessage` (one-shot), `C_VerifyMessage` (one-shot); algorithms: ML-DSA-44/65/87, SLH-DSA (all 12), RSA-PKCS, RSA-PSS, ECDSA P-256/P-384/P-521, Ed25519 |
 | **Message API** | `C_MessageSignInit` + `C_MessageSignFinal` (one-shot envelope), `C_MessageVerifyInit` + `C_MessageVerifyFinal` (one-shot envelope) |
 | **Digest** | `C_DigestInit`, `C_Digest`, `C_DigestUpdate`, `C_DigestFinal`; SHA-256, SHA-384, SHA-512, SHA3-256, SHA3-512, HMAC |
 | **Key wrap / unwrap** | `C_WrapKey`, `C_UnwrapKey` (AES-KW, AES-GCM wrap, RSA-OAEP wrap), `C_DeriveKey` (ECDH, HKDF, PBKDF2) |
@@ -205,6 +206,7 @@ export const getSoftHSMRustModule = async (): Promise<SoftHSMModule> => {
 | XMSS-MT | ✅ | ❌ Not implemented | `xmss` crate lacks multi-tree support |
 | RSA-2048/3072/4096 | ✅ | ✅ | |
 | ECDSA P-256, P-384 | ✅ | ✅ | |
+| ECDSA P-521 | ✅ | ✅ | Added in Unreleased; `CKM_ECDSA_SHA512` + prehash + ECDH |
 | Ed25519 | ✅ | ✅ | |
 | X25519 (ECDH) | ✅ | ✅ | DeriveKey |
 | AES-GCM, AES-CBC, AES-KW, AES-CTR | ✅ | ✅ | |
@@ -214,7 +216,7 @@ export const getSoftHSMRustModule = async (): Promise<SoftHSMModule> => {
 | SHA3-256/512 digest | ✅ | ✅ | |
 | HKDF | ✅ | ✅ | DeriveKey |
 | PBKDF2 | ✅ | ✅ | DeriveKey |
-| ECDSA-SHA3 variants | ✅ | ❌ Not implemented | |
+| ECDSA-SHA3 variants | ✅ | ✅ | `CKM_ECDSA_SHA3_224/256/384/512` for P-256/P-384/P-521 |
 | ECDH cofactor | ✅ | ❌ Not implemented | |
 | SP 800-108 Counter/Feedback KDF | ✅ | ❌ Not implemented | |
 | Authenticated key wrap | ✅ | ❌ Not implemented (stub) | |
@@ -231,8 +233,6 @@ export const getSoftHSMRustModule = async (): Promise<SoftHSMModule> => {
 - **XMSS-MT not supported in Rust engine** — the `xmss` crate (`0.1.0-pre.0`) only exposes
   single-tree XMSS. HSS/LMS is supported via `hbs-lms`; single-tree XMSS is supported via
   `xmss`. Use XMSS (single-tree) or HSS/LMS in the Rust engine; XMSS-MT requires the C++ engine.
-- **No ECDSA-SHA3 variants** — `p256`/`p384` crates support standard ECDSA; SHA-3 prehash
-  requires manual digest + raw signature, not yet wired.
 - **No SP 800-108 KDFs or ECDH cofactor** — not available as standalone crates; would
   require manual OpenSSL-equivalent implementation.
 - **Single session handle** — `C_OpenSession` always returns handle `1`. Multi-session

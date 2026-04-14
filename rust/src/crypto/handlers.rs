@@ -26,13 +26,14 @@ pub const ALGO_ECDH_X448: u32 = 9;
 // ECDSA curve identifiers (stored in CKA_PRIV_PARAM_SET)
 pub const CURVE_P256: u32 = 256;
 pub const CURVE_P384: u32 = 384;
+pub const CURVE_P521: u32 = 521;
 pub const CURVE_K256: u32 = 257;
 
 // ── Object Store ─────────────────────────────────────────────────────────────
 
 pub type Attributes = HashMap<u32, Vec<u8>>;
 
-pub(crate) enum DigestCtx {
+pub enum DigestCtx {
     Sha256(sha2::Sha256),
     Sha384(sha2::Sha384),
     Sha512(sha2::Sha512),
@@ -237,6 +238,16 @@ pub fn build_ec_spki_p384(pt: &[u8]) -> Vec<u8> {
     let alg_id: &[u8] = &[
         0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
         0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22, // secp384r1 OID
+    ];
+    build_spki_from_parts(alg_id, pt)
+}
+
+/// Build SPKI DER for P-521 (secp521r1) from a 133-byte uncompressed point.
+pub fn build_ec_spki_p521(pt: &[u8]) -> Vec<u8> {
+    // AlgId for P-521: 30 10 06 07 2a8648ce3d0201 06 05 2b8104 0023
+    let alg_id: &[u8] = &[
+        0x30, 0x10, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // ecPublicKey OID
+        0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23, // secp521r1 OID
     ];
     build_spki_from_parts(alg_id, pt)
 }
@@ -732,6 +743,13 @@ pub fn sign_ecdsa(mech: u32, curve: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<
             let sig: p384::ecdsa::Signature = sk.sign(msg);
             Ok(sig.to_bytes().to_vec())
         }
+        (CKM_ECDSA_SHA512, CURVE_P521) => {
+            use p521::ecdsa::signature::Signer;
+            let sk = p521::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig: p521::ecdsa::Signature = sk.sign(msg);
+            Ok(sig.to_bytes().to_vec())
+        }
         // SHA-512 prehash on P-256 (id-MLDSA65-ECDSA-P256-SHA512 composite OID)
         // FIPS 186-5 §6.4: when hash length > curve order, use leftmost bits (truncate 64→32)
         (CKM_ECDSA_SHA512, CURVE_P256) | (CKM_ECDSA_SHA512, 0) => {
@@ -812,6 +830,14 @@ pub fn sign_ecdsa(mech: u32, curve: u32, sk_bytes: &[u8], msg: &[u8]) -> Result<
             let sk = p384::ecdsa::SigningKey::from_slice(sk_bytes)
                 .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
             let sig: p384::ecdsa::Signature =
+                sk.sign_prehash(msg).map_err(|_| CKR_FUNCTION_FAILED)?;
+            Ok(sig.to_bytes().to_vec())
+        }
+        (CKM_ECDSA, CURVE_P521) => {
+            use p521::ecdsa::signature::hazmat::PrehashSigner;
+            let sk = p521::ecdsa::SigningKey::from_slice(sk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig: p521::ecdsa::Signature =
                 sk.sign_prehash(msg).map_err(|_| CKR_FUNCTION_FAILED)?;
             Ok(sig.to_bytes().to_vec())
         }
@@ -1232,6 +1258,14 @@ pub fn verify_ecdsa(
                 p384::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
             vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
         }
+        (CKM_ECDSA_SHA512, CURVE_P521) => {
+            use p521::ecdsa::signature::Verifier;
+            let vk = p521::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p521::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
+        }
         // SHA-512 prehash on P-256 (id-MLDSA65-ECDSA-P256-SHA512 composite OID)
         // FIPS 186-5 §6.4: truncate 64-byte hash to leftmost 32 bytes (P-256 field size)
         (CKM_ECDSA_SHA512, CURVE_P256) | (CKM_ECDSA_SHA512, 0) => {
@@ -1322,6 +1356,15 @@ pub fn verify_ecdsa(
             vk.verify_prehash(msg, &sig)
                 .map_err(|_| CKR_SIGNATURE_INVALID)
         }
+        (CKM_ECDSA, CURVE_P521) => {
+            use p521::ecdsa::signature::hazmat::PrehashVerifier;
+            let vk = p521::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
+                .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+            let sig =
+                p521::ecdsa::Signature::try_from(sig_bytes).map_err(|_| CKR_SIGNATURE_INVALID)?;
+            vk.verify_prehash(msg, &sig)
+                .map_err(|_| CKR_SIGNATURE_INVALID)
+        }
         (CKM_ECDSA, CURVE_K256) => {
             use k256::ecdsa::signature::hazmat::PrehashVerifier;
             let vk = k256::ecdsa::VerifyingKey::from_sec1_bytes(pk_bytes)
@@ -1336,25 +1379,64 @@ pub fn verify_ecdsa(
 }
 
 pub fn verify_eddsa(pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<(), u32> {
-    if pk_bytes.len() != 32 || sig_bytes.len() != 64 {
-        return Err(CKR_KEY_TYPE_INCONSISTENT);
-    }
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_bytes.try_into().unwrap())
+    let pk_arr: &[u8; 32] = pk_bytes.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+    let sig_arr: &[u8; 64] = sig_bytes.try_into().map_err(|_| CKR_SIGNATURE_INVALID)?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_arr)
         .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
-    let sig = ed25519_dalek::Signature::from_bytes(sig_bytes.try_into().unwrap());
+    let sig = ed25519_dalek::Signature::from_bytes(sig_arr);
     use ed25519_dalek::Verifier;
     vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
 }
 
 pub fn verify_eddsa_ph(pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<(), u32> {
     use sha2::Digest;
-    if pk_bytes.len() != 32 || sig_bytes.len() != 64 {
-        return Err(CKR_KEY_TYPE_INCONSISTENT);
-    }
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_bytes.try_into().unwrap())
+    let pk_arr: &[u8; 32] = pk_bytes.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+    let sig_arr: &[u8; 64] = sig_bytes.try_into().map_err(|_| CKR_SIGNATURE_INVALID)?;
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_arr)
         .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
-    let sig = ed25519_dalek::Signature::from_bytes(sig_bytes.try_into().unwrap());
+    let sig = ed25519_dalek::Signature::from_bytes(sig_arr);
     let prehash = sha2::Sha512::new().chain_update(msg);
     vk.verify_prehashed(prehash, None, &sig)
         .map_err(|_| CKR_SIGNATURE_INVALID)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode_hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn test_p521_kat_verify() {
+        // RFC 6979 Appendix A.2.7 — ECDSA, P-521, SHA-512, message "sample"
+        let msg = b"sample";
+
+        // SEC1 uncompressed: 04 || Ux(66 bytes) || Uy(66 bytes) = 133 bytes
+        let pk_hex = "04\
+01894550D0785932E00EAA23B694F213F8C3121F86DC97A04E5A7167DB4E5BCD371123D46E45DB6B5D5370A7F20FB633155D38FFA16D2BD761DCAC474B9A2F5023A4\
+00493101C962CD4D2FDDF782285E64584139C2F91B47F87FF82354D6630F746A28A0DB25741B5B34A828008B22ACC23F924FAAFBD4D33F81EA66956DFEAA2BFDFCF5";
+        let pk_bytes = decode_hex(pk_hex);
+        assert_eq!(pk_bytes.len(), 133);
+
+        // r(66 bytes) || s(66 bytes) = 132 bytes
+        let sig_hex = "\
+00C328FAFCBD79DD77850370C46325D987CB525569FB63C5D3BC53950E6D4C5F174E25A1EE9017B5D450606ADD152B534931D7D4E8455CC91F9B15BF05EC36E377FA\
+00617CCE7CF5064806C467F678D3B4080D6F1CC50AF26CA209417308281B68AF282623EAA63E5B5C0723D8B8C37FF0777B1A20F8CCB1DCCC43997F1EE0E44DA4A67A";
+        let sig_bytes = decode_hex(sig_hex);
+        assert_eq!(sig_bytes.len(), 132);
+
+        let rv = verify_ecdsa(
+            crate::constants::CKM_ECDSA_SHA512,
+            CURVE_P521,
+            &pk_bytes,
+            msg,
+            &sig_bytes,
+        );
+        assert_eq!(rv, Ok(()));
+    }
 }

@@ -265,11 +265,10 @@ pub fn C_Login(h_session: u32, user_type: u32, p_pin: *mut u8, ul_pin_len: u32) 
     if p_pin.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    let session = SESSIONS.with(|s| s.borrow().get(&h_session).cloned());
-    if session.is_none() {
-        return CKR_SESSION_HANDLE_INVALID;
-    }
-    let session = session.unwrap();
+    let session = match SESSIONS.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(s) => s,
+        None => return CKR_SESSION_HANDLE_INVALID,
+    };
     let slot_id = session.slot_id;
 
     if user_type == CKU_SO && !session.rw_session {
@@ -336,11 +335,11 @@ pub fn C_Login(h_session: u32, user_type: u32, p_pin: *mut u8, ul_pin_len: u32) 
 
 #[wasm_bindgen(js_name = _C_Logout)]
 pub fn C_Logout(h_session: u32) -> u32 {
-    let session = SESSIONS.with(|s| s.borrow().get(&h_session).cloned());
-    if session.is_none() {
-        return CKR_SESSION_HANDLE_INVALID;
-    }
-    let slot_id = session.unwrap().slot_id;
+    let session = match SESSIONS.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(s) => s,
+        None => return CKR_SESSION_HANDLE_INVALID,
+    };
+    let slot_id = session.slot_id;
     let mut changed = false;
     TOKEN_STORE.with(|ts| {
         let mut store = ts.borrow_mut();
@@ -363,11 +362,10 @@ pub fn C_InitPIN(h_session: u32, p_pin: *mut u8, ul_pin_len: u32) -> u32 {
     if p_pin.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    let session = SESSIONS.with(|s| s.borrow().get(&h_session).cloned());
-    if session.is_none() {
-        return CKR_SESSION_HANDLE_INVALID;
-    }
-    let session = session.unwrap();
+    let session = match SESSIONS.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(s) => s,
+        None => return CKR_SESSION_HANDLE_INVALID,
+    };
     if !session.rw_session {
         return CKR_SESSION_READ_ONLY_EXISTS;
     }
@@ -406,11 +404,10 @@ pub fn C_GetSessionInfo(h_session: u32, p_info: *mut u8) -> u32 {
     if p_info.is_null() {
         return CKR_ARGUMENTS_BAD;
     }
-    let session = SESSIONS.with(|s| s.borrow().get(&h_session).cloned());
-    if session.is_none() {
-        return CKR_SESSION_HANDLE_INVALID;
-    }
-    let session = session.unwrap();
+    let session = match SESSIONS.with(|s| s.borrow().get(&h_session).cloned()) {
+        Some(s) => s,
+        None => return CKR_SESSION_HANDLE_INVALID,
+    };
     let login_state = TOKEN_STORE.with(|ts| {
         ts.borrow()
             .get(&session.slot_id)
@@ -1074,6 +1071,10 @@ pub fn C_GenerateKeyPair(
                     ul_public_key_attribute_count,
                     CKA_EC_PARAMS,
                 );
+                let is_p521 = ec_params
+                    .as_ref()
+                    .is_some_and(|b| b.len() >= 7 && b[b.len() - 1] == 0x23);
+
                 let is_p384 = ec_params
                     .as_ref()
                     .is_some_and(|b| b.len() >= 7 && b[b.len() - 1] == 0x22);
@@ -1111,7 +1112,23 @@ pub fn C_GenerateKeyPair(
                 store_bool(&mut prv_attrs, CKA_LOCAL, true);
                 store_ulong(&mut prv_attrs, CKA_KEY_GEN_MECHANISM, CKM_EC_KEY_PAIR_GEN);
 
-                if is_p384 {
+                if is_p521 {
+                    store_param_set(&mut pub_attrs, CURVE_P521);
+                    store_param_set(&mut prv_attrs, CURVE_P521);
+                    let sk = with_rng!(rng, { p521::ecdsa::SigningKey::random(&mut rng) });
+                    let vk = p521::ecdsa::VerifyingKey::from(&sk);
+                    prv_attrs.insert(CKA_VALUE, sk.to_bytes().to_vec());
+                    let vk_bytes = vk.to_encoded_point(false).as_bytes().to_vec();
+                    let mut ec_point = Vec::with_capacity(3 + vk_bytes.len());
+                    ec_point.push(0x04u8); // DER OCTET STRING tag
+                    // 133 fits in short-form length
+                    ec_point.push(0x81u8); // multi-byte length
+                    ec_point.push(vk_bytes.len() as u8); // 133
+                    ec_point.extend_from_slice(&vk_bytes);
+                    pub_attrs.insert(CKA_EC_POINT, ec_point);
+                    let spki = build_ec_spki_p521(&vk_bytes);
+                    pub_attrs.insert(CKA_PUBLIC_KEY_INFO, spki);
+                } else if is_p384 {
                     store_param_set(&mut pub_attrs, CURVE_P384);
                     store_param_set(&mut prv_attrs, CURVE_P384);
                     let sk = with_rng!(rng, { p384::ecdsa::SigningKey::random(&mut rng) });
@@ -1893,10 +1910,17 @@ pub fn C_CreateObject(
             // Derive curve from CKA_EC_PARAMS OID for imported EC keys.
             // P-384 OID (1.3.132.0.34): 06 05 2b 81 04 00 22 — last byte 0x22
             // P-256 OID (1.2.840.10045.3.1.7): 06 07 2a 86 48 ce 3d 03 01 07 — last byte 0x07
+            let is_p521 = ec_params.len() >= 7 && ec_params[ec_params.len() - 1] == 0x23;
             let is_p384 = ec_params.len() >= 7 && ec_params[ec_params.len() - 1] == 0x22;
             store_param_set(
                 &mut new_attrs,
-                if is_p384 { CURVE_P384 } else { CURVE_P256 },
+                if is_p521 {
+                    CURVE_P521
+                } else if is_p384 {
+                    CURVE_P384
+                } else {
+                    CURVE_P256
+                },
             );
         }
         // PKCS#11 v3.2 §4.3 — CKA_LOCAL=FALSE is mandatory for imported objects;
@@ -2670,12 +2694,14 @@ pub fn C_Encrypt(
                 use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
                 let nonce = GenericArray::from_slice(&iv);
                 let result = match key_bytes.len() {
-                    16 => Aes128Gcm::new_from_slice(&key_bytes)
-                        .unwrap()
-                        .encrypt(nonce, plaintext),
-                    32 => Aes256Gcm::new_from_slice(&key_bytes)
-                        .unwrap()
-                        .encrypt(nonce, plaintext),
+                    16 => match Aes128Gcm::new_from_slice(&key_bytes) {
+                        Ok(cipher) => cipher.encrypt(nonce, plaintext),
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                    },
+                    32 => match Aes256Gcm::new_from_slice(&key_bytes) {
+                        Ok(cipher) => cipher.encrypt(nonce, plaintext),
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                    },
                     _ => return CKR_KEY_TYPE_INCONSISTENT,
                 };
                 match result {
@@ -2691,19 +2717,19 @@ pub fn C_Encrypt(
                 let mut buf = vec![0u8; padded_len];
                 buf[..plaintext.len()].copy_from_slice(plaintext);
                 match key_bytes.len() {
-                    16 => match Aes128CbcEnc::new_from_slices(&key_bytes, &iv)
-                        .unwrap()
-                        .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
-                    {
-                        Ok(ct) => ct.to_vec(),
-                        Err(_) => return CKR_FUNCTION_FAILED,
+                    16 => match Aes128CbcEnc::new_from_slices(&key_bytes, &iv) {
+                        Ok(cipher) => match cipher.encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len()) {
+                            Ok(ct) => ct.to_vec(),
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        },
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                     },
-                    32 => match Aes256CbcEnc::new_from_slices(&key_bytes, &iv)
-                        .unwrap()
-                        .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
-                    {
-                        Ok(ct) => ct.to_vec(),
-                        Err(_) => return CKR_FUNCTION_FAILED,
+                    32 => match Aes256CbcEnc::new_from_slices(&key_bytes, &iv) {
+                        Ok(cipher) => match cipher.encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len()) {
+                            Ok(ct) => ct.to_vec(),
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        },
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                     },
                     _ => return CKR_KEY_TYPE_INCONSISTENT,
                 }
@@ -2897,10 +2923,9 @@ pub fn C_Decrypt(
     let ctx = DECRYPT_STATE.with(|s| {
         s.borrow_mut()
             .remove(&h_session)
-            .map(|c| (c.mech_type, c.key_handle, c.iv, c.tag_bits))
     });
     let (mech_type, key_handle, iv, tag_bits) = match ctx {
-        Some(c) => c,
+        Some(c) => (c.mech_type, c.key_handle, c.iv, c.tag_bits),
         None => return CKR_OPERATION_NOT_INITIALIZED,
     };
     let key_bytes = match get_object_value(key_handle) {
@@ -2917,12 +2942,14 @@ pub fn C_Decrypt(
                 use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
                 let nonce = GenericArray::from_slice(&iv);
                 let result = match key_bytes.len() {
-                    16 => Aes128Gcm::new_from_slice(&key_bytes)
-                        .unwrap()
-                        .decrypt(nonce, ciphertext),
-                    32 => Aes256Gcm::new_from_slice(&key_bytes)
-                        .unwrap()
-                        .decrypt(nonce, ciphertext),
+                    16 => match Aes128Gcm::new_from_slice(&key_bytes) {
+                        Ok(cipher) => cipher.decrypt(nonce, ciphertext),
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                    },
+                    32 => match Aes256Gcm::new_from_slice(&key_bytes) {
+                        Ok(cipher) => cipher.decrypt(nonce, ciphertext),
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                    },
                     _ => return CKR_KEY_TYPE_INCONSISTENT,
                 };
                 match result {
@@ -2936,19 +2963,19 @@ pub fn C_Decrypt(
                 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
                 let mut buf = ciphertext.to_vec();
                 let pt_slice: &[u8] = match key_bytes.len() {
-                    16 => match Aes128CbcDec::new_from_slices(&key_bytes, &iv)
-                        .unwrap()
-                        .decrypt_padded_mut::<Pkcs7>(&mut buf)
-                    {
-                        Ok(pt) => pt,
-                        Err(_) => return CKR_FUNCTION_FAILED,
+                    16 => match Aes128CbcDec::new_from_slices(&key_bytes, &iv) {
+                        Ok(cipher) => match cipher.decrypt_padded_mut::<Pkcs7>(&mut buf) {
+                            Ok(pt) => pt,
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        },
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                     },
-                    32 => match Aes256CbcDec::new_from_slices(&key_bytes, &iv)
-                        .unwrap()
-                        .decrypt_padded_mut::<Pkcs7>(&mut buf)
-                    {
-                        Ok(pt) => pt,
-                        Err(_) => return CKR_FUNCTION_FAILED,
+                    32 => match Aes256CbcDec::new_from_slices(&key_bytes, &iv) {
+                        Ok(cipher) => match cipher.decrypt_padded_mut::<Pkcs7>(&mut buf) {
+                            Ok(pt) => pt,
+                            Err(_) => return CKR_FUNCTION_FAILED,
+                        },
+                        Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
                     },
                     _ => return CKR_KEY_TYPE_INCONSISTENT,
                 };
@@ -3419,6 +3446,32 @@ pub fn C_DeriveKey(
                             Err(_) => return CKR_ARGUMENTS_BAD,
                         };
                         p256::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
+                            .raw_secret_bytes()
+                            .to_vec()
+                    }
+                    (ALGO_ECDSA, CURVE_P384) | (0, CURVE_P384) => {
+                        let sk = match p384::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
+                            Ok(s) => s,
+                            Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                        };
+                        let peer_pk = match p384::PublicKey::from_sec1_bytes(peer_pk_bytes) {
+                            Ok(pk) => pk,
+                            Err(_) => return CKR_ARGUMENTS_BAD,
+                        };
+                        p384::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
+                            .raw_secret_bytes()
+                            .to_vec()
+                    }
+                    (ALGO_ECDSA, CURVE_P521) | (0, CURVE_P521) => {
+                        let sk = match p521::NonZeroScalar::try_from(our_sk_bytes.as_slice()) {
+                            Ok(s) => s,
+                            Err(_) => return CKR_KEY_TYPE_INCONSISTENT,
+                        };
+                        let peer_pk = match p521::PublicKey::from_sec1_bytes(peer_pk_bytes) {
+                            Ok(pk) => pk,
+                            Err(_) => return CKR_ARGUMENTS_BAD,
+                        };
+                        p521::ecdh::diffie_hellman(&sk, peer_pk.as_affine())
                             .raw_secret_bytes()
                             .to_vec()
                     }
@@ -4908,8 +4961,10 @@ pub fn C_EncryptMessageNext(
         if (flags & 0x00000001) != 0
         /* CKF_END_OF_MESSAGE */
         {
-            let final_ctx =
-                MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let final_ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                Some(s) => s,
+                None => return CKR_OPERATION_NOT_INITIALIZED,
+            };
             let p_tag = if p_parameter.is_null() {
                 return CKR_ARGUMENTS_BAD;
             } else {
@@ -4934,19 +4989,27 @@ pub fn C_EncryptMessageNext(
                     );
                     *pul_ciphertext_part_len = ul_plaintext_part_len;
 
-                    MESSAGE_ENCRYPT_STATE
-                        .with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    MESSAGE_ENCRYPT_STATE.with(|s| {
+                        if let Some(mut st) = s.borrow_mut().get_mut(&h_session) {
+                            st.in_message = false;
+                        }
+                    });
                     CKR_OK
                 }
                 Err(e) => {
-                    MESSAGE_ENCRYPT_STATE
-                        .with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    MESSAGE_ENCRYPT_STATE.with(|s| {
+                        if let Some(mut st) = s.borrow_mut().get_mut(&h_session) {
+                            st.in_message = false;
+                        }
+                    });
                     e
                 }
             }
         } else {
-            let intermediate_ctx =
-                MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let intermediate_ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                Some(s) => s,
+                None => return CKR_OPERATION_NOT_INITIALIZED,
+            };
             let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
             match aes_gcm_exec(
                 &intermediate_ctx.key,
@@ -5111,8 +5174,10 @@ pub fn C_DecryptMessageNext(
         if (flags & 0x00000001) != 0
         /* CKF_END_OF_MESSAGE */
         {
-            let final_ctx =
-                MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let final_ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                Some(s) => s,
+                None => return CKR_OPERATION_NOT_INITIALIZED,
+            };
             let p_tag = if p_parameter.is_null() {
                 return CKR_ARGUMENTS_BAD;
             } else {
@@ -5136,19 +5201,27 @@ pub fn C_DecryptMessageNext(
                         ul_ciphertext_part_len as usize,
                     );
                     *pul_plaintext_part_len = ul_ciphertext_part_len;
-                    MESSAGE_DECRYPT_STATE
-                        .with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    MESSAGE_DECRYPT_STATE.with(|s| {
+                        if let Some(mut st) = s.borrow_mut().get_mut(&h_session) {
+                            st.in_message = false;
+                        }
+                    });
                     CKR_OK
                 }
                 Err(e) => {
-                    MESSAGE_DECRYPT_STATE
-                        .with(|s| s.borrow_mut().get_mut(&h_session).unwrap().in_message = false);
+                    MESSAGE_DECRYPT_STATE.with(|s| {
+                        if let Some(mut st) = s.borrow_mut().get_mut(&h_session) {
+                            st.in_message = false;
+                        }
+                    });
                     e
                 }
             }
         } else {
-            let intermediate_ctx =
-                MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned().unwrap());
+            let intermediate_ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                Some(s) => s,
+                None => return CKR_OPERATION_NOT_INITIALIZED,
+            };
             let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
             match aes_gcm_exec(
                 &intermediate_ctx.key,

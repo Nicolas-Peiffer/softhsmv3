@@ -83,7 +83,7 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 | ECDH1 with KDF (`CKD_SHA*_KDF`) | Not supported | **Implemented** — X9.63 SHA{1/256/384/512} KDF on `CKM_ECDH1_DERIVE`; 5G SUCI deconcealment (TS 33.501 §6.12.2) |
 | LMS/HSS (SP 800-208) | Not supported | **SHA-256 + SHAKE-256** (N32/N24); all 80 NIST parameter combinations; C++↔Rust cross-engine verified |
 | XMSS / XMSS^MT (RFC 8391) | Not supported | **Both engines** (XMSS-MT: C++ only); all SHA2/SHAKE-256 param sets |
-| SHA-3 signature variants | Not supported | **C++:** `CKM_ECDSA_SHA3_224/256/384/512`, `CKM_RSA_SHA3_224/256/384/512_PKCS/_PKCS_PSS` — **Rust:** `CKM_ECDSA_SHA3_224/256/384/512` + `CKM_ECDSA_SHA512` |
+| SHA-3 signature variants | Not supported | **C++:** `CKM_ECDSA_SHA3_224/256/384/512`, `CKM_RSA_SHA3_224/256/384/512_PKCS/_PKCS_PSS` — **Rust:** `CKM_ECDSA_SHA3_224/256/384/512` + `CKM_ECDSA_SHA512` (native for P-521; FIPS 186-5 §6.4 truncation for P-256/P-384) |
 | GOST/DES/DSA/DH | Included | Removed (focused codebase) |
 | WASM build | Not supported | **Emscripten + Rust `wasm32-unknown-unknown`** |
 | Rust WASM engine | N/A | **Pure Rust (~1.4 MB), drop-in parity** |
@@ -277,12 +277,12 @@ C_UnwrapKeyAuthenticated()
 ```c
 // ECDSA raw (pre-hashed) — PKCS#11 v3.2 §6.3.12 — caller supplies digest, token does not hash
 // Supported by both C++ and Rust engines; required for Bitcoin/secp256k1 workflows
-CKM_ECDSA                  = 0x00001041  // P-256, P-384, secp256k1 (K-256)
+CKM_ECDSA                  = 0x00001041  // P-256, P-384, P-521, secp256k1 (K-256)
 
 // ECDSA with SHA-2/SHA-3 pre-hash (C++ and Rust engines)
 CKM_ECDSA_SHA256           = 0x00001044
 CKM_ECDSA_SHA384           = 0x00001045
-CKM_ECDSA_SHA512           = 0x00001046  // Rust: FIPS 186-5 §6.4 truncation for P-256/P-384
+CKM_ECDSA_SHA512           = 0x00001046  // Rust: native SHA-512 for P-521; FIPS 186-5 §6.4 truncation for P-256/P-384
 CKM_ECDSA_SHA3_224         = 0x00001047
 CKM_ECDSA_SHA3_256         = 0x00001048
 CKM_ECDSA_SHA3_384         = 0x00001049
@@ -442,7 +442,7 @@ Multi-part, admin, and async stubs return `CKR_FUNCTION_NOT_SUPPORTED`. The brow
 **Classical:**
 
 - RSA (PKCS#1 v1.5, OAEP, PSS — keygen + sign/verify)
-- ECDSA P-256/P-384 (keygen, sign, verify) — including ECDSA-SHA512 (FIPS 186-5 §6.4) and ECDSA-SHA3-224/256/384/512
+- ECDSA P-256/P-384/P-521 (keygen, sign, verify) — including ECDSA-SHA512 (native for P-521; FIPS 186-5 §6.4 truncation for P-256/P-384) and ECDSA-SHA3-224/256/384/512
 - Ed25519 (keygen, sign, verify) — pure (`CKM_EDDSA`) and pre-hash (`CKM_EDDSA_PH`, Ed25519ph)
 - ECDH P-256 + X25519 (key agreement via `C_DeriveKey`)
 - AES-128/256 (GCM, CBC-PAD, CTR, Key Wrap, Key Wrap with Padding, Authenticated Wrap/Unwrap)
@@ -483,7 +483,7 @@ From `rust/Cargo.toml`:
 | `ml-dsa` =0.1.0-rc.7 | FIPS 204 digital signatures |
 | `slh-dsa` =0.2.0-rc.4 | FIPS 205 hash-based signatures |
 | `rsa` 0.9 | RSA PKCS#1 / OAEP / PSS |
-| `p256`, `p384` 0.13 | NIST curve ECDSA + ECDH |
+| `p256`, `p384`, `p521` 0.13 | NIST curve ECDSA + ECDH (P-256, P-384, P-521) |
 | `ed25519-dalek` 2.1 | Ed25519 signatures |
 | `x25519-dalek` 2.0 | X25519 key agreement |
 | `aes` + `aes-gcm` + `cbc` + `aes-kw` | AES modes |

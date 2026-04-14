@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 wasm-bindgen = "0.2.117"
 js-sys = "0.3.69"
 web-sys = { version = "0.3.69", features = ["console"] }
+lazy_static = "1.4.0"
 
 # Cryptography (Pure Rust replacements for OpenSSL/Botan)
 getrandom = { version = "0.2.17", features = ["js"] }
@@ -31,6 +32,7 @@ hkdf = "0.12"
 ml-kem = "0.2.3"
 p256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
 p384 = { version = "0.13", features = ["ecdsa", "ecdh"] }
+p521 = { version = "0.13", features = ["ecdsa", "ecdh"] }
 k256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
 pkcs8 = { version = "0.11.0-rc.11", features = ["alloc"] }  # TODO: upgrade when stable release available
 rsa = { version = "0.9", features = ["sha2"] }

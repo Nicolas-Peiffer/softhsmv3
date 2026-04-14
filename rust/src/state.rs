@@ -6,27 +6,48 @@ use wasm_bindgen::prelude::*;
 use crate::constants::*;
 use crate::crypto::*;
 
-thread_local! {
-    pub static OBJECTS: RefCell<HashMap<u32, Attributes>> = RefCell::new(HashMap::new());
-    pub static NEXT_HANDLE: RefCell<u32> = const { RefCell::new(100) };
-    pub static NEXT_SESSION_HANDLE: RefCell<u32> = const { RefCell::new(1) };
-    pub static SIGN_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
-    pub static VERIFY_STATE: RefCell<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = RefCell::new(HashMap::new());
-    pub static VERIFY_SIG_STATE: RefCell<HashMap<u32, VerifySigCtx>> = RefCell::new(HashMap::new());
-    pub static ENCRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
-    pub static DECRYPT_STATE: RefCell<HashMap<u32, EncryptCtx>> = RefCell::new(HashMap::new());
-    pub static MESSAGE_ENCRYPT_STATE: RefCell<HashMap<u32, MsgAeadCtx>> = RefCell::new(HashMap::new());
-    pub static MESSAGE_DECRYPT_STATE: RefCell<HashMap<u32, MsgAeadCtx>> = RefCell::new(HashMap::new());
-    pub static DIGEST_STATE: RefCell<HashMap<u32, DigestCtx>> = RefCell::new(HashMap::new());
-    pub static FIND_STATE: RefCell<HashMap<u32, FindCtx>> = RefCell::new(HashMap::new());
+use lazy_static::lazy_static;
+use std::sync::{Mutex, MutexGuard};
+
+pub struct GlobalState<T>(pub Mutex<T>);
+
+impl<T> GlobalState<T> {
+    pub const fn new_const(t: T) -> Self { Self(Mutex::new(t)) }
+    pub fn new(t: T) -> Self { Self(Mutex::new(t)) }
+    pub fn with<R, F: FnOnce(&GlobalState<T>) -> R>(&self, f: F) -> R {
+        f(self)
+    }
+    #[track_caller]
+    pub fn borrow_mut(&self) -> MutexGuard<'_, T> {
+        self.0.lock().unwrap()
+    }
+    #[track_caller]
+    pub fn borrow(&self) -> MutexGuard<'_, T> {
+        self.0.lock().unwrap()
+    }
+}
+
+lazy_static! {
+    pub static ref OBJECTS: GlobalState<HashMap<u32, Attributes>> = GlobalState::new(HashMap::new());
+    pub static ref NEXT_HANDLE: GlobalState<u32> = GlobalState::new(100);
+    pub static ref NEXT_SESSION_HANDLE: GlobalState<u32> = GlobalState::new(1);
+    pub static ref SIGN_STATE: GlobalState<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = GlobalState::new(HashMap::new());
+    pub static ref VERIFY_STATE: GlobalState<HashMap<u32, (u32, u32, Vec<u8>, bool)>> = GlobalState::new(HashMap::new());
+    pub static ref VERIFY_SIG_STATE: GlobalState<HashMap<u32, VerifySigCtx>> = GlobalState::new(HashMap::new());
+    pub static ref ENCRYPT_STATE: GlobalState<HashMap<u32, EncryptCtx>> = GlobalState::new(HashMap::new());
+    pub static ref DECRYPT_STATE: GlobalState<HashMap<u32, EncryptCtx>> = GlobalState::new(HashMap::new());
+    pub static ref MESSAGE_ENCRYPT_STATE: GlobalState<HashMap<u32, MsgAeadCtx>> = GlobalState::new(HashMap::new());
+    pub static ref MESSAGE_DECRYPT_STATE: GlobalState<HashMap<u32, MsgAeadCtx>> = GlobalState::new(HashMap::new());
+    pub static ref DIGEST_STATE: GlobalState<HashMap<u32, DigestCtx>> = GlobalState::new(HashMap::new());
+    pub static ref FIND_STATE: GlobalState<HashMap<u32, FindCtx>> = GlobalState::new(HashMap::new());
     /// Persistent ACVP deterministic RNG — created once in C_Initialize, advances
     /// across all operations, cleared in C_Finalize. Uses IETF ChaCha20 (RFC 8439)
     /// to match the C++ OpenSSL EVP_chacha20 implementation.
-    pub static ACVP_RNG: RefCell<Option<ChaCha20Rng>> = RefCell::new(None);
+    pub static ref ACVP_RNG: GlobalState<Option<ChaCha20Rng>> = GlobalState::new(None);
 
     // PKCS#11 v3.2 token and session tracking
-    pub static SESSIONS: RefCell<HashMap<u32, SessionState>> = RefCell::new(HashMap::new());
-    pub static TOKEN_STORE: RefCell<HashMap<u32, TokenState>> = RefCell::new(HashMap::new());
+    pub static ref SESSIONS: GlobalState<HashMap<u32, SessionState>> = GlobalState::new(HashMap::new());
+    pub static ref TOKEN_STORE: GlobalState<HashMap<u32, TokenState>> = GlobalState::new(HashMap::new());
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -411,8 +432,8 @@ pub fn finalize_private_key_attrs(attrs: &mut Attributes) {
 // ── Allocation size tracker ───────────────────────────────────────────────────
 // Maps each live allocation pointer (as u32) → original size so that
 // _free can reconstruct the exact Layout required by std::alloc::dealloc.
-thread_local! {
-    pub static ALLOC_SIZES: RefCell<HashMap<u32, u32>> = RefCell::new(HashMap::new());
+lazy_static! {
+    pub static ref ALLOC_SIZES: GlobalState<HashMap<u32, u32>> = GlobalState::new(HashMap::new());
 }
 
 #[wasm_bindgen(js_name = _malloc)]

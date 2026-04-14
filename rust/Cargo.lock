@@ -888,6 +888,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "p521"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fc9e2161f1f215afdfce23677034ae137bbd45016a880c2eb3ba8eb95f085b2"
+dependencies = [
+ "base16ct 0.2.0",
+ "ecdsa",
+ "elliptic-curve 0.13.8",
+ "primeorder",
+ "rand_core 0.6.4",
+ "sha2",
+]
+
+[[package]]
 name = "pbkdf2"
 version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1283,9 +1297,11 @@ dependencies = [
  "hmac",
  "js-sys",
  "k256",
+ "lazy_static",
  "ml-kem",
  "p256",
  "p384",
+ "p521",
  "pbkdf2",
  "pkcs8 0.11.0-rc.11",
  "rand 0.8.5",

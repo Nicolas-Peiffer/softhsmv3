@@ -32,6 +32,7 @@
 #include "ByteString.h"
 #include "SecureDataManager.h"
 #include <cstdio>
+#include <memory>
 
 #ifndef _WIN32
 #include <sys/time.h>
@@ -268,9 +269,8 @@ CK_RV Token::setSOPIN(ByteString& oldPIN, ByteString& newPIN)
 	}
 
 	// Verify oldPIN
-	SecureDataManager* verifier = new SecureDataManager(sdm->getSOPINBlob(), sdm->getUserPINBlob());
+	std::unique_ptr<SecureDataManager> verifier(new SecureDataManager(sdm->getSOPINBlob(), sdm->getUserPINBlob()));
 	bool result = verifier->loginSO(oldPIN);
-	delete verifier;
 	if (result == false)
 	{
 		flags |= CKF_SO_PIN_COUNT_LOW;
@@ -313,26 +313,23 @@ CK_RV Token::setUserPIN(ByteString& oldPIN, ByteString& newPIN)
 	}
 
 	// Verify oldPIN
-	SecureDataManager* newSdm = new SecureDataManager(sdm->getSOPINBlob(), sdm->getUserPINBlob());
+	std::unique_ptr<SecureDataManager> newSdm(new SecureDataManager(sdm->getSOPINBlob(), sdm->getUserPINBlob()));
 	if (newSdm->loginUser(oldPIN) == false)
 	{
 		flags |= CKF_USER_PIN_COUNT_LOW;
 		token->setTokenFlags(flags);
-		delete newSdm;
 		return CKR_PIN_INCORRECT;
 	}
 
 	// Set the new user PIN
 	if (newSdm->setUserPIN(newPIN) == false)
 	{
-		delete newSdm;
 		return CKR_GENERAL_ERROR;
 	}
 
 	// Save PIN to token file
 	if (token->setUserPIN(newSdm->getUserPINBlob()) == false)
 	{
-		delete newSdm;
 		return CKR_GENERAL_ERROR;
 	}
 
@@ -341,7 +338,7 @@ CK_RV Token::setUserPIN(ByteString& oldPIN, ByteString& newPIN)
 
 	// Switch sdm
 	delete sdm;
-	sdm = newSdm;
+	sdm = newSdm.release();
 
 	ByteString soPINBlob, userPINBlob;
 	valid = token->getSOPIN(soPINBlob) && token->getUserPIN(userPINBlob);
@@ -485,12 +482,14 @@ CK_RV Token::getTokenInfo(CK_TOKEN_INFO_PTR info)
 
 		if (token->getTokenLabel(label))
 		{
-			strncpy((char*) info->label, (char*) label.byte_str(), label.size());
+			size_t copyLen = label.size() < 32 ? label.size() : 32;
+			memcpy(info->label, label.byte_str(), copyLen);
 		}
 
 		if (token->getTokenSerial(serial))
 		{
-			strncpy((char*) info->serialNumber, (char*) serial.byte_str(), serial.size());
+			size_t copyLen = serial.size() < 16 ? serial.size() : 16;
+			memcpy(info->serialNumber, serial.byte_str(), copyLen);
 		}
 	}
 	else

@@ -1282,6 +1282,54 @@ void test_authenticated_wrap() {
     }
 }
 
+void test_ecdsa_curves() {
+    CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
+    CK_KEY_TYPE ecType = CKK_EC;
+    CK_BBOOL bTrue = CK_TRUE, bFalse = CK_FALSE;
+    
+    CK_BYTE oid_p256[] = { 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 };
+    CK_BYTE oid_p521[] = { 0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23 };
+
+    auto run_ec = [&](const std::string& name, CK_BYTE* oid, CK_ULONG oidLen, CK_MECHANISM_TYPE sigType) {
+        CK_ATTRIBUTE pubTmpl[] = {
+            { CKA_CLASS, &pubClass, sizeof(pubClass) },
+            { CKA_KEY_TYPE, &ecType, sizeof(ecType) },
+            { CKA_TOKEN, &bFalse, sizeof(bFalse) },
+            { CKA_VERIFY, &bTrue, sizeof(bTrue) },
+            { CKA_EC_PARAMS, oid, oidLen }
+        };
+        CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
+        CK_ATTRIBUTE privTmpl[] = {
+            { CKA_CLASS, &privClass, sizeof(privClass) },
+            { CKA_KEY_TYPE, &ecType, sizeof(ecType) },
+            { CKA_TOKEN, &bFalse, sizeof(bFalse) },
+            { CKA_PRIVATE, &bTrue, sizeof(bTrue) },
+            { CKA_SIGN, &bTrue, sizeof(bTrue) }
+        };
+        
+        CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL_PTR, 0 };
+        CK_OBJECT_HANDLE hPub, hPriv;
+        CK_RV rv = fl->C_GenerateKeyPair(hSess, &mech, pubTmpl, 5, privTmpl, 5, &hPub, &hPriv);
+        record_result("ECDSA", "Generate_" + name, rv == CKR_OK ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+        
+        if (rv == CKR_OK) {
+            CK_MECHANISM signMech = { sigType, NULL_PTR, 0 };
+            rv = fl->C_SignInit(hSess, &signMech, hPriv);
+            if (rv == CKR_OK) {
+                CK_BYTE msg[] = "test";
+                CK_BYTE sig[512]; CK_ULONG sigLen = sizeof(sig);
+                rv = fl->C_Sign(hSess, msg, 4, sig, &sigLen);
+                record_result("ECDSA", "Sign_" + name, rv == CKR_OK ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+            } else {
+                record_result("ECDSA", "SignInit_" + name, "FAIL", "RV=" + std::to_string(rv));
+            }
+        }
+    };
+    
+    run_ec("P256", oid_p256, sizeof(oid_p256), CKM_ECDSA_SHA256);
+    run_ec("P521", oid_p521, sizeof(oid_p521), CKM_ECDSA_SHA512);
+}
+
 int main(int argc, char** argv) {
     parse_args(argc, argv);
     
@@ -1321,41 +1369,10 @@ int main(int argc, char** argv) {
         refresh_session(); test_authenticated_wrap();
     }
     
-    // Quick inline test
-    refresh_session();
-    {
-        CK_OBJECT_CLASS pubClass = CKO_PUBLIC_KEY;
-        CK_KEY_TYPE ecType = CKK_EC;
-        CK_BBOOL bTrue = CK_TRUE;
-        CK_BBOOL bFalse = CK_FALSE;
-        CK_BYTE oid_p256[] = { 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07 };
-
-        CK_ATTRIBUTE pubTmpl[] = {
-            { CKA_CLASS, &pubClass, sizeof(pubClass) },
-            { CKA_KEY_TYPE, &ecType, sizeof(ecType) },
-            { CKA_TOKEN, &bFalse, sizeof(bFalse) },
-            { CKA_VERIFY, &bTrue, sizeof(bTrue) },
-            { CKA_EC_PARAMS, oid_p256, sizeof(oid_p256) }
-        };
-        
-        CK_OBJECT_CLASS privClass = CKO_PRIVATE_KEY;
-        CK_ATTRIBUTE privTmpl[] = {
-            { CKA_CLASS, &privClass, sizeof(privClass) },
-            { CKA_KEY_TYPE, &ecType, sizeof(ecType) },
-            { CKA_TOKEN, &bFalse, sizeof(bFalse) },
-            { CKA_PRIVATE, &bTrue, sizeof(bTrue) },
-            { CKA_SIGN, &bTrue, sizeof(bTrue) }
-        };
-
-        CK_MECHANISM mech = { CKM_EC_KEY_PAIR_GEN, NULL_PTR, 0 };
-        CK_OBJECT_HANDLE hPub, hPriv;
-        CK_RV rv = fl->C_GenerateKeyPair(hSess, &mech, pubTmpl, 5, privTmpl, 5, &hPub, &hPriv);
-        printf("GenerateKeyPair rv: %lx\n", rv);
-
-        CK_MECHANISM signMech = { CKM_ECDSA_SHA256, NULL_PTR, 0 };
-        rv = fl->C_SignInit(hSess, &signMech, hPriv);
-        printf("SignInit rv: %lx\n", rv);
+    if (opt_category == "all" || opt_category == "classical") {
+        refresh_session(); test_ecdsa_curves();
     }
+    
     fl->C_Finalize(NULL);
     
     // Output JSON

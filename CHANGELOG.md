@@ -8,6 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Rust engine: ECDSA P-521 support** — full keygen, sign, verify, and ECDH via `p521` RustCrypto crate (v0.13):
+  - `C_GenerateKeyPair` with `CKM_EC_KEY_PAIR_GEN` dispatches to P-521 when `CKA_EC_PARAMS` ends with `0x23` (secp521r1 OID `1.2.840.10045.3.1.35`)
+  - `C_Sign` / `C_Verify` with `CKM_ECDSA_SHA512` — native P-521 SHA-512 (no FIPS 186-5 hash truncation needed at this security level)
+  - `C_Sign` / `C_Verify` with `CKM_ECDSA` (prehash) — caller supplies digest, Rust signs/verifies raw
+  - `C_DeriveKey` with `CKM_ECDH1_DERIVE` — P-521 ECDH via `p521::ecdh::diffie_hellman`
+  - New helper `build_ec_spki_p521()` — DER-encodes 133-byte uncompressed P-521 public key in SubjectPublicKeyInfo format with `id-ecPublicKey` + secp521r1 OID
+  - `Cargo.toml`: added `p521 = { version = "0.13", features = ["ecdsa", "ecdh"] }` and `lazy_static = "1.4.0"`
+
+### Fixed
+
+- **Rust: EdDSA safety** — replaced `.unwrap()` with `.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)` in `verify_eddsa()` and `verify_eddsa_ph()`; malformed public key bytes now return `CKR_KEY_TYPE_INCONSISTENT` instead of panicking
+
 ---
 
 ## [0.4.21] — 2026-04-12

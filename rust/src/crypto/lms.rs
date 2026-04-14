@@ -337,9 +337,9 @@ pub fn lms_shake_n32_verify(
 ) -> bool {
     // Parse public key (56 bytes for N32)
     if pubkey_bytes.len() < 56 { return false; }
-    let lms_type  = u32::from_be_bytes(pubkey_bytes[0..4].try_into().unwrap());
-    let lmots_type= u32::from_be_bytes(pubkey_bytes[4..8].try_into().unwrap());
-    let i_val: [u8; 16] = pubkey_bytes[8..24].try_into().unwrap();
+    let lms_type  = u32::from_be_bytes(pubkey_bytes[0..4].try_into().unwrap_or_default());
+    let lmots_type= u32::from_be_bytes(pubkey_bytes[4..8].try_into().unwrap_or_default());
+    let i_val: [u8; 16] = pubkey_bytes[8..24].try_into().unwrap_or_default();
     let t1 = &pubkey_bytes[24..56];   // T[1]: root node
 
     // Tree height from LMS type
@@ -363,17 +363,17 @@ pub fn lms_shake_n32_verify(
     let lms_sig_len = 4 + lmots_sig_len + 4 + height as usize * n;
     if signature_bytes.len() < lms_sig_len { return false; }
 
-    let q = u32::from_be_bytes(signature_bytes[0..4].try_into().unwrap());
+    let q = u32::from_be_bytes(signature_bytes[0..4].try_into().unwrap_or_default());
     if q >= (1u32 << height) { return false; }
 
     let lmots_sig = &signature_bytes[4..4 + lmots_sig_len];
-    let lmots_type_sig = u32::from_be_bytes(lmots_sig[0..4].try_into().unwrap());
+    let lmots_type_sig = u32::from_be_bytes(lmots_sig[0..4].try_into().unwrap_or_default());
     if lmots_type_sig != lmots_type { return false; }
     let c = &lmots_sig[4..4 + n];
     let y: Vec<&[u8]> = (0..p).map(|i| &lmots_sig[4 + n + i * n..4 + n + (i + 1) * n]).collect();
 
     let lms_type_sig = u32::from_be_bytes(
-        signature_bytes[4 + lmots_sig_len..4 + lmots_sig_len + 4].try_into().unwrap());
+        signature_bytes[4 + lmots_sig_len..4 + lmots_sig_len + 4].try_into().unwrap_or_default());
     if lms_type_sig != lms_type { return false; }
     let path_start = 4 + lmots_sig_len + 4;
     let path: Vec<&[u8]> = (0..height as usize)
