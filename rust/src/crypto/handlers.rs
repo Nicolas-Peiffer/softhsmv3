@@ -124,6 +124,14 @@ pub fn get_ml_dsa_ph(mech: u32) -> Option<fips204::Ph> {
         crate::constants::CKM_HASH_ML_DSA_SHA256 => Some(fips204::Ph::SHA256),
         crate::constants::CKM_HASH_ML_DSA_SHA512 => Some(fips204::Ph::SHA512),
         crate::constants::CKM_HASH_ML_DSA_SHAKE128 => Some(fips204::Ph::SHAKE128),
+        // Newly supported via patched fips204 crate (all 10 PKCS#11 v3.2 §6.67.7 variants)
+        crate::constants::CKM_HASH_ML_DSA_SHA224 => Some(fips204::Ph::SHA224),
+        crate::constants::CKM_HASH_ML_DSA_SHA384 => Some(fips204::Ph::SHA384),
+        crate::constants::CKM_HASH_ML_DSA_SHA3_224 => Some(fips204::Ph::SHA3_224),
+        crate::constants::CKM_HASH_ML_DSA_SHA3_256 => Some(fips204::Ph::SHA3_256),
+        crate::constants::CKM_HASH_ML_DSA_SHA3_384 => Some(fips204::Ph::SHA3_384),
+        crate::constants::CKM_HASH_ML_DSA_SHA3_512 => Some(fips204::Ph::SHA3_512),
+        crate::constants::CKM_HASH_ML_DSA_SHAKE256 => Some(fips204::Ph::SHAKE256),
         _ => None,
     }
 }
@@ -134,6 +142,13 @@ pub fn get_slh_dsa_ph(mech: u32) -> Option<fips205::Ph> {
         crate::constants::CKM_HASH_SLH_DSA_SHA512 => Some(fips205::Ph::SHA512),
         crate::constants::CKM_HASH_SLH_DSA_SHAKE128 => Some(fips205::Ph::SHAKE128),
         crate::constants::CKM_HASH_SLH_DSA_SHAKE256 => Some(fips205::Ph::SHAKE256),
+        // Newly supported via patched fips205 crate (all 10 PKCS#11 v3.2 §6.69.7 variants)
+        crate::constants::CKM_HASH_SLH_DSA_SHA224 => Some(fips205::Ph::SHA224),
+        crate::constants::CKM_HASH_SLH_DSA_SHA384 => Some(fips205::Ph::SHA384),
+        crate::constants::CKM_HASH_SLH_DSA_SHA3_224 => Some(fips205::Ph::SHA3_224),
+        crate::constants::CKM_HASH_SLH_DSA_SHA3_256 => Some(fips205::Ph::SHA3_256),
+        crate::constants::CKM_HASH_SLH_DSA_SHA3_384 => Some(fips205::Ph::SHA3_384),
+        crate::constants::CKM_HASH_SLH_DSA_SHA3_512 => Some(fips205::Ph::SHA3_512),
         _ => None,
     }
 }
@@ -145,7 +160,6 @@ pub unsafe fn write_fixed_str(buf: *mut u8, offset: usize, s: &str, max_len: usi
 }
 
 // ── SLH-DSA Macros ──────────────────────────────────────────────────────────
-
 
 #[macro_export]
 macro_rules! slh_dsa_keygen {
@@ -1380,8 +1394,8 @@ pub fn verify_ecdsa(
 pub fn verify_eddsa(pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<(), u32> {
     let pk_arr: &[u8; 32] = pk_bytes.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
     let sig_arr: &[u8; 64] = sig_bytes.try_into().map_err(|_| CKR_SIGNATURE_INVALID)?;
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_arr)
-        .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+    let vk =
+        ed25519_dalek::VerifyingKey::from_bytes(pk_arr).map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
     let sig = ed25519_dalek::Signature::from_bytes(sig_arr);
     use ed25519_dalek::Verifier;
     vk.verify(msg, &sig).map_err(|_| CKR_SIGNATURE_INVALID)
@@ -1391,8 +1405,8 @@ pub fn verify_eddsa_ph(pk_bytes: &[u8], msg: &[u8], sig_bytes: &[u8]) -> Result<
     use sha2::Digest;
     let pk_arr: &[u8; 32] = pk_bytes.try_into().map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
     let sig_arr: &[u8; 64] = sig_bytes.try_into().map_err(|_| CKR_SIGNATURE_INVALID)?;
-    let vk = ed25519_dalek::VerifyingKey::from_bytes(pk_arr)
-        .map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
+    let vk =
+        ed25519_dalek::VerifyingKey::from_bytes(pk_arr).map_err(|_| CKR_KEY_TYPE_INCONSISTENT)?;
     let sig = ed25519_dalek::Signature::from_bytes(sig_arr);
     let prehash = sha2::Sha512::new().chain_update(msg);
     vk.verify_prehashed(prehash, None, &sig)

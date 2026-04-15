@@ -24,7 +24,7 @@
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// TODO: Store EVP context in securely allocated memory
+// TODO: Ensure OpenSSL CTX destruction securely wipes inner allocations (since CTX is opaque and cannot transparently use SecureAllocator without overriding CRYPTO_set_mem_functions)
 
 /*****************************************************************************
  OSSLEVPSymmetricAlgorithm.cpp

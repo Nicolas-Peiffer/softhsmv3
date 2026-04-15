@@ -12,8 +12,8 @@ use crate::crypto::*;
 use crate::slh_dsa_keygen;
 use crate::state::*;
 
-use rand::rngs::OsRng;
 use rand::SeedableRng;
+use rand::rngs::OsRng;
 
 /// ACVP-aware RNG selection macro.
 /// In ACVP mode, uses the persistent ChaCha20Rng from thread-local state
@@ -27,8 +27,7 @@ use rand::SeedableRng;
 macro_rules! with_rng {
     ($rng:ident, $body:block) => {{
         let mut _acvp_rng_cell = crate::state::ACVP_RNG.with(|r| r.borrow_mut().take());
-        if _acvp_rng_cell.is_some() {
-            let mut $rng = _acvp_rng_cell.as_mut().unwrap();
+        if let Some(ref mut $rng) = _acvp_rng_cell {
             let _with_rng_result = { $body };
             // Restore the (now-advanced) RNG back to thread-local state
             crate::state::ACVP_RNG.with(|r| {
@@ -190,11 +189,7 @@ pub fn C_InitToken(slot_id: u32, p_pin: *mut u8, ul_pin_len: u32, p_label: *mut 
         }
     });
 
-    if success {
-        CKR_OK
-    } else {
-        CKR_SLOT_ID_INVALID
-    }
+    if success { CKR_OK } else { CKR_SLOT_ID_INVALID }
 }
 
 #[wasm_bindgen(js_name = _C_OpenSession)]
@@ -306,8 +301,11 @@ pub fn C_Login(h_session: u32, user_type: u32, p_pin: *mut u8, ul_pin_len: u32) 
             if hash_pin(pin_bytes, &token.so_pin_salt) != token.so_pin_hash {
                 return CKR_PIN_INCORRECT;
             }
-            TOKEN_STORE
-                .with(|ts| ts.borrow_mut().get_mut(&slot_id).unwrap().login_state = LoginState::SO);
+            TOKEN_STORE.with(|ts| {
+                if let Some(mut t) = ts.borrow_mut().get_mut(&slot_id) {
+                    t.login_state = LoginState::SO;
+                }
+            });
         }
         CKU_USER => {
             if token.login_state == LoginState::User {
@@ -316,15 +314,21 @@ pub fn C_Login(h_session: u32, user_type: u32, p_pin: *mut u8, ul_pin_len: u32) 
             if token.login_state == LoginState::SO {
                 return CKR_USER_ANOTHER_ALREADY_LOGGED_IN;
             }
-            if token.user_pin_hash.is_none() {
+            if token.user_pin_hash.is_none() || token.user_pin_salt.is_none() {
                 return CKR_USER_PIN_NOT_INITIALIZED;
             }
             let pin_bytes = unsafe { std::slice::from_raw_parts(p_pin, ul_pin_len as usize) };
-            if hash_pin(pin_bytes, &token.user_pin_salt.unwrap()) != token.user_pin_hash.unwrap() {
-                return CKR_PIN_INCORRECT;
+            if let (Some(salt), Some(hash)) = (&token.user_pin_salt, &token.user_pin_hash) {
+                if hash_pin(pin_bytes, salt) != *hash {
+                    return CKR_PIN_INCORRECT;
+                }
+            } else {
+                return CKR_USER_PIN_NOT_INITIALIZED;
             }
             TOKEN_STORE.with(|ts| {
-                ts.borrow_mut().get_mut(&slot_id).unwrap().login_state = LoginState::User
+                if let Some(mut t) = ts.borrow_mut().get_mut(&slot_id) {
+                    t.login_state = LoginState::User;
+                }
             });
         }
         _ => return CKR_USER_TYPE_INVALID,
@@ -391,11 +395,7 @@ pub fn C_InitPIN(h_session: u32, p_pin: *mut u8, ul_pin_len: u32) -> u32 {
     if not_logged_in {
         return CKR_USER_NOT_LOGGED_IN;
     }
-    if success {
-        CKR_OK
-    } else {
-        CKR_GENERAL_ERROR
-    }
+    if success { CKR_OK } else { CKR_GENERAL_ERROR }
 }
 
 #[wasm_bindgen(js_name = _C_GetSessionInfo)]
@@ -1658,7 +1658,7 @@ pub fn C_EncapsulateKey(
     pul_ciphertext_len: *mut u32,
     ph_key: *mut u32,
 ) -> u32 {
-    use ml_kem::{kem::Encapsulate, EncodedSizeUser, KemCore};
+    use ml_kem::{EncodedSizeUser, KemCore, kem::Encapsulate};
 
     if ph_key.is_null() || pul_ciphertext_len.is_null() {
         return CKR_ARGUMENTS_BAD;
@@ -1748,7 +1748,7 @@ pub fn C_DecapsulateKey(
     ul_ciphertext_len: u32,
     ph_key: *mut u32,
 ) -> u32 {
-    use ml_kem::{kem::Decapsulate, EncodedSizeUser, KemCore};
+    use ml_kem::{EncodedSizeUser, KemCore, kem::Decapsulate};
 
     if ph_key.is_null() {
         return CKR_ARGUMENTS_BAD;
@@ -2266,8 +2266,7 @@ pub fn C_Verify(
                     get_object_attr_u32(hkey, CKA_XMSS_PARAM_SET).unwrap_or(CKP_XMSS_SHA2_10_256);
                 crate::crypto::xmss_bridge::xmss_verify(xmss_param, &pub_bytes, msg, sig_bytes)
             } else {
-                let lms_param =
-                    get_object_attr_u32(hkey, CKA_LMS_PARAM_SET).unwrap_or(0x05);
+                let lms_param = get_object_attr_u32(hkey, CKA_LMS_PARAM_SET).unwrap_or(0x05);
                 crate::crypto::lms::hss_verify(&pub_bytes, msg, sig_bytes, lms_param)
             };
             VERIFY_STATE.with(|s| s.borrow_mut().remove(&h_session));
@@ -2919,10 +2918,7 @@ pub fn C_Decrypt(
     pul_data_len: *mut u32,
 ) -> u32 {
     // Remove state on entry — consumed on all paths except null-buffer size query
-    let ctx = DECRYPT_STATE.with(|s| {
-        s.borrow_mut()
-            .remove(&h_session)
-    });
+    let ctx = DECRYPT_STATE.with(|s| s.borrow_mut().remove(&h_session));
     let (mech_type, key_handle, iv, tag_bits) = match ctx {
         Some(c) => (c.mech_type, c.key_handle, c.iv, c.tag_bits),
         None => return CKR_OPERATION_NOT_INITIALIZED,
@@ -2938,7 +2934,7 @@ pub fn C_Decrypt(
         let pt = match mech_type {
             CKM_AES_GCM => {
                 use aes_gcm::aead::generic_array::GenericArray;
-                use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
+                use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit, aead::Aead};
                 let nonce = GenericArray::from_slice(&iv);
                 let result = match key_bytes.len() {
                     16 => match Aes128Gcm::new_from_slice(&key_bytes) {
@@ -2957,7 +2953,7 @@ pub fn C_Decrypt(
                 }
             }
             CKM_AES_CBC_PAD => {
-                use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+                use aes::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
                 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
                 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
                 let mut buf = ciphertext.to_vec();
@@ -3423,7 +3419,10 @@ pub fn C_DeriveKey(
                 let peer_pk_bytes: &[u8] = if peer_pk_raw.len() >= 3 && peer_pk_raw[0] == 0x04 {
                     if (peer_pk_raw[1] as usize) + 2 == peer_pk_raw.len() {
                         &peer_pk_raw[2..]
-                    } else if peer_pk_raw.len() >= 4 && peer_pk_raw[1] == 0x81 && (peer_pk_raw[2] as usize) + 3 == peer_pk_raw.len() {
+                    } else if peer_pk_raw.len() >= 4
+                        && peer_pk_raw[1] == 0x81
+                        && (peer_pk_raw[2] as usize) + 3 == peer_pk_raw.len()
+                    {
                         &peer_pk_raw[3..]
                     } else if peer_pk_raw.len() >= 5 && peer_pk_raw[1] == 0x82 {
                         let len = ((peer_pk_raw[2] as usize) << 8) | (peer_pk_raw[3] as usize);
@@ -4287,15 +4286,23 @@ pub fn C_WrapKeyAuthenticated(
 
         // AES-GCM encrypt
         use aes_gcm::aead::generic_array::GenericArray;
-        use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
+        use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit, aead::Aead};
         let nonce = GenericArray::from_slice(&iv);
         let wrapped = match wrapping_key.len() {
-            16 => Aes128Gcm::new_from_slice(&wrapping_key)
-                .unwrap()
-                .encrypt(nonce, key_to_wrap.as_slice()),
-            32 => Aes256Gcm::new_from_slice(&wrapping_key)
-                .unwrap()
-                .encrypt(nonce, key_to_wrap.as_slice()),
+            16 => {
+                let cipher = match Aes128Gcm::new_from_slice(&wrapping_key) {
+                    Ok(c) => c,
+                    Err(_) => return CKR_FUNCTION_FAILED,
+                };
+                cipher.encrypt(nonce, key_to_wrap.as_slice())
+            }
+            32 => {
+                let cipher = match Aes256Gcm::new_from_slice(&wrapping_key) {
+                    Ok(c) => c,
+                    Err(_) => return CKR_FUNCTION_FAILED,
+                };
+                cipher.encrypt(nonce, key_to_wrap.as_slice())
+            }
             _ => return CKR_KEY_TYPE_INCONSISTENT,
         };
         let wrapped = match wrapped {
@@ -4377,15 +4384,23 @@ pub fn C_UnwrapKeyAuthenticated(
 
         // AES-GCM decrypt
         use aes_gcm::aead::generic_array::GenericArray;
-        use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
+        use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit, aead::Aead};
         let nonce = GenericArray::from_slice(&iv);
         let key_value = match unwrapping_key.len() {
-            16 => Aes128Gcm::new_from_slice(&unwrapping_key)
-                .unwrap()
-                .decrypt(nonce, wrapped_data),
-            32 => Aes256Gcm::new_from_slice(&unwrapping_key)
-                .unwrap()
-                .decrypt(nonce, wrapped_data),
+            16 => {
+                let cipher = match Aes128Gcm::new_from_slice(&unwrapping_key) {
+                    Ok(c) => c,
+                    Err(_) => return CKR_FUNCTION_FAILED,
+                };
+                cipher.decrypt(nonce, wrapped_data)
+            }
+            32 => {
+                let cipher = match Aes256Gcm::new_from_slice(&unwrapping_key) {
+                    Ok(c) => c,
+                    Err(_) => return CKR_FUNCTION_FAILED,
+                };
+                cipher.decrypt(nonce, wrapped_data)
+            }
             _ => return CKR_KEY_TYPE_INCONSISTENT,
         };
         let key_value = match key_value {
@@ -4574,7 +4589,7 @@ pub fn C_GetSlotInfo(_slot_id: u32, p_info: *mut u8) -> u32 {
     unsafe {
         let info = std::slice::from_raw_parts_mut(p_info, 104);
         info.fill(b' '); // PKCS#11 padding is spaces for char arrays
-                         // slotDescription[64] at offset 0
+        // slotDescription[64] at offset 0
         let desc = b"SoftHSMv3 Rust WASM Virtual Slot                                ";
         info[0..64].copy_from_slice(&desc[..64]);
         // manufacturerID[32] at offset 64
@@ -4763,7 +4778,7 @@ pub fn aes_gcm_exec(
     tag_bits: u32,
 ) -> Result<Vec<u8>, u32> {
     use aes_gcm::aead::generic_array::GenericArray;
-    use aes_gcm::{aead::Aead, Aes128Gcm, Aes256Gcm, KeyInit};
+    use aes_gcm::{Aes128Gcm, Aes256Gcm, KeyInit, aead::Aead};
 
     let tag_bytes = (tag_bits / 8) as usize;
     let nonce = GenericArray::from_slice(iv);
@@ -4983,10 +4998,11 @@ pub fn C_EncryptMessageNext(
         if (flags & 0x00000001) != 0
         /* CKF_END_OF_MESSAGE */
         {
-            let final_ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
-                Some(s) => s,
-                None => return CKR_OPERATION_NOT_INITIALIZED,
-            };
+            let final_ctx =
+                match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                    Some(s) => s,
+                    None => return CKR_OPERATION_NOT_INITIALIZED,
+                };
             let p_tag = if p_parameter.is_null() {
                 return CKR_ARGUMENTS_BAD;
             } else {
@@ -5028,10 +5044,11 @@ pub fn C_EncryptMessageNext(
                 }
             }
         } else {
-            let intermediate_ctx = match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
-                Some(s) => s,
-                None => return CKR_OPERATION_NOT_INITIALIZED,
-            };
+            let intermediate_ctx =
+                match MESSAGE_ENCRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                    Some(s) => s,
+                    None => return CKR_OPERATION_NOT_INITIALIZED,
+                };
             let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
             match aes_gcm_exec(
                 &intermediate_ctx.key,
@@ -5196,10 +5213,11 @@ pub fn C_DecryptMessageNext(
         if (flags & 0x00000001) != 0
         /* CKF_END_OF_MESSAGE */
         {
-            let final_ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
-                Some(s) => s,
-                None => return CKR_OPERATION_NOT_INITIALIZED,
-            };
+            let final_ctx =
+                match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                    Some(s) => s,
+                    None => return CKR_OPERATION_NOT_INITIALIZED,
+                };
             let p_tag = if p_parameter.is_null() {
                 return CKR_ARGUMENTS_BAD;
             } else {
@@ -5240,10 +5258,11 @@ pub fn C_DecryptMessageNext(
                 }
             }
         } else {
-            let intermediate_ctx = match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
-                Some(s) => s,
-                None => return CKR_OPERATION_NOT_INITIALIZED,
-            };
+            let intermediate_ctx =
+                match MESSAGE_DECRYPT_STATE.with(|s| s.borrow().get(&h_session).cloned()) {
+                    Some(s) => s,
+                    None => return CKR_OPERATION_NOT_INITIALIZED,
+                };
             let mut fake_tag = vec![0u8; (intermediate_ctx.tag_bits / 8) as usize];
             match aes_gcm_exec(
                 &intermediate_ctx.key,

@@ -43,18 +43,13 @@
 #include "Directory.h"
 #include "CryptoFactory.h"
 #include "RNG.h"
+#include "OSPathSep.h"
 
 CPPUNIT_TEST_SUITE_REGISTRATION(FileTests);
 
-// FIXME: all pathnames in this file are *NIX/BSD specific
-
 void FileTests::setUp()
 {
-#ifndef _WIN32
-	int rv = system("rm -rf testdir");
-#else
-	int rv = system("rmdir /s /q testdir 2> nul");
-#endif
+	int rv = system("rm -rf testdir 2> /dev/null || rmdir /s /q testdir 2> nul");
 	(void) rv;
 
 	CPPUNIT_ASSERT(!system("mkdir testdir"));
@@ -62,11 +57,7 @@ void FileTests::setUp()
 
 void FileTests::tearDown()
 {
-#ifndef _WIN32
-	CPPUNIT_ASSERT(!system("rm -rf testdir"));
-#else
-	CPPUNIT_ASSERT(!system("rmdir /s /q testdir 2> nul"));
-#endif
+	CPPUNIT_ASSERT(!system("rm -rf testdir 2> /dev/null || rmdir /s /q testdir 2> nul"));
 }
 
 void FileTests::testExistNotExist()
@@ -75,11 +66,7 @@ void FileTests::testExistNotExist()
 	CPPUNIT_ASSERT(!exists("nonExistentFile"));
 
 	// Attempt to open a file known not to exist
-#ifndef _WIN32
-	File doesntExist("testdir/nonExistentFile", DEFAULT_UMASK);
-#else
-	File doesntExist("testdir\\nonExistentFile", DEFAULT_UMASK);
-#endif
+	File doesntExist("testdir" OS_PATHSEP "nonExistentFile", DEFAULT_UMASK);
 
 	CPPUNIT_ASSERT(!doesntExist.isValid());
 
@@ -91,13 +78,9 @@ void FileTests::testExistNotExist()
 #endif
 	CPPUNIT_ASSERT(exists("existingFile"));
 
-#ifndef _WIN32
-	File exists("testdir/existingFile", DEFAULT_UMASK);
-#else
-	File exists("testdir\\existingFile", DEFAULT_UMASK);
-#endif
+	File existsFile("testdir" OS_PATHSEP "existingFile", DEFAULT_UMASK);
 
-	CPPUNIT_ASSERT(exists.isValid());
+	CPPUNIT_ASSERT(existsFile.isValid());
 }
 
 void FileTests::testCreateNotCreate()
@@ -107,21 +90,13 @@ void FileTests::testCreateNotCreate()
 	CPPUNIT_ASSERT(!exists("nonExistentFile2"));
 
 	// Attempt to open a file known not to exist
-#ifndef _WIN32
-	File doesntExist("testdir/nonExistentFile", DEFAULT_UMASK, true, true, false);
-#else
-	File doesntExist("testdir\\nonExistentFile", DEFAULT_UMASK, true, true, false);
-#endif
+	File doesntExist("testdir" OS_PATHSEP "nonExistentFile", DEFAULT_UMASK, true, true, false);
 
 	CPPUNIT_ASSERT(!doesntExist.isValid());
 	CPPUNIT_ASSERT(!exists("nonExistentFile"));
 
 	// Attempt to open a file known not to exist in create mode
-#ifndef _WIN32
-	File willBeCreated("testdir/nonExistentFile2", DEFAULT_UMASK, true, true, true);
-#else
-	File willBeCreated("testdir\\nonExistentFile2", DEFAULT_UMASK, true, true, true);
-#endif
+	File willBeCreated("testdir" OS_PATHSEP "nonExistentFile2", DEFAULT_UMASK, true, true, true);
 
 	CPPUNIT_ASSERT(willBeCreated.isValid());
 	CPPUNIT_ASSERT(exists("nonExistentFile2"));
@@ -163,20 +138,11 @@ void FileTests::testCreateUmask()
 void FileTests::testLockUnlock()
 {
 	// Create pre-condition
-#ifndef _WIN32
-	CPPUNIT_ASSERT(!system("echo someStuff > testdir/existingFile"));
-#else
-	CPPUNIT_ASSERT(!system("echo someStuff > testdir\\existingFile"));
-#endif
+	CPPUNIT_ASSERT(!system("echo someStuff > testdir" OS_PATHSEP "existingFile"));
 	CPPUNIT_ASSERT(exists("existingFile"));
 
-#ifndef _WIN32
-	File file1("testdir/existingFile", DEFAULT_UMASK);
-	File file2("testdir/existingFile", DEFAULT_UMASK);
-#else
-	File file1("testdir\\existingFile", DEFAULT_UMASK);
-	File file2("testdir\\existingFile", DEFAULT_UMASK);
-#endif
+	File file1("testdir" OS_PATHSEP "existingFile", DEFAULT_UMASK);
+	File file2("testdir" OS_PATHSEP "existingFile", DEFAULT_UMASK);
 
 	CPPUNIT_ASSERT(file1.lock(false));
 	CPPUNIT_ASSERT(!file1.lock(false));
@@ -206,11 +172,7 @@ void FileTests::testWriteRead()
 
 	// Create a file for writing
 	{
-#ifndef _WIN32
-		File newFile("testdir/newFile", DEFAULT_UMASK, false, true);
-#else
-		File newFile("testdir\\newFile", DEFAULT_UMASK, false, true);
-#endif
+		File newFile("testdir" OS_PATHSEP "newFile", DEFAULT_UMASK, false, true);
 
 		CPPUNIT_ASSERT(newFile.isValid());
 
@@ -235,11 +197,7 @@ void FileTests::testWriteRead()
 
 	// Read the created file back
 	{
-#ifndef _WIN32
-		File newFile("testdir/newFile", DEFAULT_UMASK);
-#else
-		File newFile("testdir\\newFile", DEFAULT_UMASK);
-#endif
+		File newFile("testdir" OS_PATHSEP "newFile", DEFAULT_UMASK);
 
 		CPPUNIT_ASSERT(newFile.isValid());
 
@@ -286,11 +244,7 @@ void FileTests::testSeek()
 
 	{
 		// Create the test file
-#ifndef _WIN32
-		File testFile("testdir/testFile", DEFAULT_UMASK, false, true, true);
-#else
-		File testFile("testdir\\testFile", DEFAULT_UMASK, false, true, true);
-#endif
+		File testFile("testdir" OS_PATHSEP "testFile", DEFAULT_UMASK, false, true, true);
 
 		CPPUNIT_ASSERT(testFile.isValid());
 
@@ -299,11 +253,7 @@ void FileTests::testSeek()
 	}
 
 	// Open the test file for reading
-#ifndef _WIN32
-	File testFile("testdir/testFile", DEFAULT_UMASK);
-#else
-	File testFile("testdir\\testFile", DEFAULT_UMASK);
-#endif
+	File testFile("testdir" OS_PATHSEP "testFile", DEFAULT_UMASK);
 
 	CPPUNIT_ASSERT(testFile.isValid());
 
@@ -354,11 +304,7 @@ void FileTests::testSeek()
 
 bool FileTests::exists(std::string name)
 {
-#ifndef _WIN32
-	Directory dir("./testdir");
-#else
-	Directory dir(".\\testdir");
-#endif
+	Directory dir("." OS_PATHSEP "testdir");
 
 
 	CPPUNIT_ASSERT(dir.isValid());

@@ -221,7 +221,10 @@ pub fn hss_sign(
 // serialized key/sig bytes; it cannot parse SP 800-208 SHAKE type IDs (0x0F–0x13).
 // This path is only hit for §12.3 ACVP sigver KAT (external vectors from NIST).
 
-use sha3::{Shake256 as Sha3Shake256, digest::{ExtendableOutput, Update}};
+use sha3::{
+    Shake256 as Sha3Shake256,
+    digest::{ExtendableOutput, Update},
+};
 
 fn shake256_n32(input: &[u8]) -> [u8; 32] {
     use sha3::digest::XofReader;
@@ -240,8 +243,8 @@ fn lmots_n32_params(lmots_type: u32) -> Option<(u8, usize, u8)> {
         // SHA-256 N32 (0x01–0x04) and SHAKE-256 N32 (0x09–0x0C) share same w/p/ls
         0x01 | 0x09 => Some((1, 265, 7)),
         0x02 | 0x0A => Some((2, 133, 6)),
-        0x03 | 0x0B => Some((4,  67, 4)),
-        0x04 | 0x0C => Some((8,  34, 0)),
+        0x03 | 0x0B => Some((4, 67, 4)),
+        0x04 | 0x0C => Some((8, 34, 0)),
         _ => None,
     }
 }
@@ -271,7 +274,7 @@ fn lmots_candidate_key(
     i_val: &[u8; 16],
     q: u32,
     lmots_type: u32,
-    c: &[u8],     // n-byte randomizer C from sig
+    c: &[u8],    // n-byte randomizer C from sig
     y: &[&[u8]], // p × n-byte sig components
     message: &[u8],
     is_shake: bool,
@@ -287,7 +290,11 @@ fn lmots_candidate_key(
     buf.extend_from_slice(c);
     buf.extend_from_slice(message);
     use sha2::Digest;
-    let q_hash: [u8; 32] = if is_shake { shake256_n32(&buf) } else { sha2::Sha256::digest(&buf).into() };
+    let q_hash: [u8; 32] = if is_shake {
+        shake256_n32(&buf)
+    } else {
+        sha2::Sha256::digest(&buf).into()
+    };
 
     // Cksm computation: append 2-byte checksum to Q
     let ck = checksum(&q_hash, w, ls);
@@ -308,8 +315,11 @@ fn lmots_candidate_key(
             h_in.extend_from_slice(&(i as u16).to_be_bytes());
             h_in.push(j as u8);
             h_in.extend_from_slice(&tmp);
-            tmp = if is_shake { shake256_n32(&h_in).to_vec() }
-                  else { sha2::Sha256::digest(&h_in).to_vec() };
+            tmp = if is_shake {
+                shake256_n32(&h_in).to_vec()
+            } else {
+                sha2::Sha256::digest(&h_in).to_vec()
+            };
         }
         z.push(tmp);
     }
@@ -320,8 +330,14 @@ fn lmots_candidate_key(
     kc_in.extend_from_slice(&q.to_be_bytes());
     kc_in.extend_from_slice(&0xD3u16.to_be_bytes());
     kc_in.extend_from_slice(c);
-    for zi in &z { kc_in.extend_from_slice(zi); }
-    let kc: [u8; 32] = if is_shake { shake256_n32(&kc_in) } else { sha2::Sha256::digest(&kc_in).into() };
+    for zi in &z {
+        kc_in.extend_from_slice(zi);
+    }
+    let kc: [u8; 32] = if is_shake {
+        shake256_n32(&kc_in)
+    } else {
+        sha2::Sha256::digest(&kc_in).into()
+    };
     Some(kc)
 }
 
@@ -330,17 +346,15 @@ fn lmots_candidate_key(
 ///               format: u32be(lms_type) || u32be(lmots_type) || I[16] || T[1][32]
 /// signature_bytes: raw LMS sig (no HSS Nspk prefix)
 ///                  format: u32be(q) || LMOTS_SIG || u32be(lms_type) || path[h][32]
-pub fn lms_shake_n32_verify(
-    pubkey_bytes: &[u8],
-    message: &[u8],
-    signature_bytes: &[u8],
-) -> bool {
+pub fn lms_shake_n32_verify(pubkey_bytes: &[u8], message: &[u8], signature_bytes: &[u8]) -> bool {
     // Parse public key (56 bytes for N32)
-    if pubkey_bytes.len() < 56 { return false; }
-    let lms_type  = u32::from_be_bytes(pubkey_bytes[0..4].try_into().unwrap_or_default());
-    let lmots_type= u32::from_be_bytes(pubkey_bytes[4..8].try_into().unwrap_or_default());
+    if pubkey_bytes.len() < 56 {
+        return false;
+    }
+    let lms_type = u32::from_be_bytes(pubkey_bytes[0..4].try_into().unwrap_or_default());
+    let lmots_type = u32::from_be_bytes(pubkey_bytes[4..8].try_into().unwrap_or_default());
     let i_val: [u8; 16] = pubkey_bytes[8..24].try_into().unwrap_or_default();
-    let t1 = &pubkey_bytes[24..56];   // T[1]: root node
+    let t1 = &pubkey_bytes[24..56]; // T[1]: root node
 
     // Tree height from LMS type
     let height = match lms_param_height(lms_type) {
@@ -359,25 +373,39 @@ pub fn lms_shake_n32_verify(
     // Parse LMS signature
     // LMS sig = u32be(q) || LMOTS_SIG || u32be(lms_type) || h×n path nodes
     // LMOTS_SIG = u32be(lmots_type) || C[n] || y[p][n]
-    let lmots_sig_len = 4 + n + p * n;   // type(4) + C(n) + y(p×n)
+    let lmots_sig_len = 4 + n + p * n; // type(4) + C(n) + y(p×n)
     let lms_sig_len = 4 + lmots_sig_len + 4 + height as usize * n;
-    if signature_bytes.len() < lms_sig_len { return false; }
+    if signature_bytes.len() < lms_sig_len {
+        return false;
+    }
 
     let q = u32::from_be_bytes(signature_bytes[0..4].try_into().unwrap_or_default());
-    if q >= (1u32 << height) { return false; }
+    if q >= (1u32 << height) {
+        return false;
+    }
 
     let lmots_sig = &signature_bytes[4..4 + lmots_sig_len];
     let lmots_type_sig = u32::from_be_bytes(lmots_sig[0..4].try_into().unwrap_or_default());
-    if lmots_type_sig != lmots_type { return false; }
+    if lmots_type_sig != lmots_type {
+        return false;
+    }
     let c = &lmots_sig[4..4 + n];
-    let y: Vec<&[u8]> = (0..p).map(|i| &lmots_sig[4 + n + i * n..4 + n + (i + 1) * n]).collect();
+    let y: Vec<&[u8]> = (0..p)
+        .map(|i| &lmots_sig[4 + n + i * n..4 + n + (i + 1) * n])
+        .collect();
 
     let lms_type_sig = u32::from_be_bytes(
-        signature_bytes[4 + lmots_sig_len..4 + lmots_sig_len + 4].try_into().unwrap_or_default());
-    if lms_type_sig != lms_type { return false; }
+        signature_bytes[4 + lmots_sig_len..4 + lmots_sig_len + 4]
+            .try_into()
+            .unwrap_or_default(),
+    );
+    if lms_type_sig != lms_type {
+        return false;
+    }
     let path_start = 4 + lmots_sig_len + 4;
     let path: Vec<&[u8]> = (0..height as usize)
-        .map(|i| &signature_bytes[path_start + i * n..path_start + (i + 1) * n]).collect();
+        .map(|i| &signature_bytes[path_start + i * n..path_start + (i + 1) * n])
+        .collect();
 
     // Step 1: compute LMOTS candidate key Kc
     let kc = match lmots_candidate_key(&i_val, q, lmots_type, c, &y, message, is_shake) {
@@ -395,8 +423,11 @@ pub fn lms_shake_n32_verify(
     h_in.extend_from_slice(&node_num.to_be_bytes());
     h_in.extend_from_slice(&0x82u16.to_be_bytes());
     h_in.extend_from_slice(&kc);
-    let mut tmp: [u8; 32] = if is_shake { shake256_n32(&h_in) }
-                             else { sha2::Sha256::digest(&h_in).into() };
+    let mut tmp: [u8; 32] = if is_shake {
+        shake256_n32(&h_in)
+    } else {
+        sha2::Sha256::digest(&h_in).into()
+    };
 
     for path_node in &path {
         let parent = node_num / 2;
@@ -411,7 +442,11 @@ pub fn lms_shake_n32_verify(
             h_in2.extend_from_slice(path_node);
             h_in2.extend_from_slice(&tmp);
         }
-        tmp = if is_shake { shake256_n32(&h_in2) } else { sha2::Sha256::digest(&h_in2).into() };
+        tmp = if is_shake {
+            shake256_n32(&h_in2)
+        } else {
+            sha2::Sha256::digest(&h_in2).into()
+        };
         node_num = parent;
     }
 
@@ -430,12 +465,12 @@ pub fn hss_verify(pub_key_bytes: &[u8], message: &[u8], signature: &[u8], lms_pa
         0x05..=0x09 => lms::verify::<Sha256_256>(message, signature, pub_key_bytes).is_ok(),
         0x0A..=0x0E => lms::verify::<Sha256_192>(message, signature, pub_key_bytes).is_ok(),
         0x0F..=0x13 | 0x14..=0x18 => {
-            let raw_lms_pub = if pub_key_bytes.len() == 60 && pub_key_bytes[..4] == [0,0,0,1] {
+            let raw_lms_pub = if pub_key_bytes.len() == 60 && pub_key_bytes[..4] == [0, 0, 0, 1] {
                 &pub_key_bytes[4..]
             } else {
                 pub_key_bytes
             };
-            let raw_lms_sig = if signature.len() > 4 && signature[..4] == [0,0,0,0] {
+            let raw_lms_sig = if signature.len() > 4 && signature[..4] == [0, 0, 0, 0] {
                 &signature[4..]
             } else {
                 signature

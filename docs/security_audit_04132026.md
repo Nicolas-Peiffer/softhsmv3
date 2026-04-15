@@ -55,20 +55,22 @@ The WebAssembly Rust engine evaluates token authentication strings via a deeply 
 - **Risk Evaluation**: Although severe within deployment scopes, **this is an Accepted Risk**. The library retains this exact architecture as a pedagogical mechanism. It translates into a textbook "perfect storm" learning module, permitting researchers and students to construct live statistical side-channel extractions directly against the WebAssembly pipeline simulator.
 - **Remediation**: No action required. These non-constant comparison hooks remain purposefully intact.
 
-> [!IMPORTANT]
-> **CWE-400: Uncontrolled Resource Consumption / DoS (Rust FFI)**
+> [!NOTE]
+> **[RESOLVED] CWE-400: Uncontrolled Resource Consumption / DoS (Rust FFI)**
 
 - **Impact**: Rampant `.unwrap()` invocations inside Rust boundary layers (`ffi.rs`). For example, `let session = session.unwrap();` attempts to unbundle session retrieval natively.
 - **Risk**: Handing the module a malformed, expired, or non-existent `h_session` causes the `unwrap()` to trigger a panic. In standard PKCS#11 implementations, this requires returning `CKR_SESSION_HANDLE_INVALID`. Under Rust-to-WebAssembly boundaries, a panic manifests as an uncatchable `RuntimeError: unreachable` resulting in whole host-process crashing (Denial of Service).
+- **Remediation**: *Fixed in v0.4.24.* All `.unwrap()` allocations within standard operational sequences have been replaced with safe `.unwrap_or_else()` fallbacks mapping to proper CKR errors. 
 
-> [!WARNING]
-> **CWE-120: Out-of-bounds Buffer Use (C++)**
+> [!NOTE]
+> **[RESOLVED] CWE-120: Out-of-bounds Buffer Use (C++)**
 
 - **Impact**: Variables utilizing `strncpy` natively infer safe string lengths blindly trusting the source data array rather than statically bounding by the destination buffer:
   ```cpp
   strncpy((char*) info->label, (char*) label.byte_str(), label.size());
   ```
 - **Risk**: The target array (`info->label`) holds precisely 32 bytes. If a manipulated label yields a size of >32, `strncpy` writes into adjacent structs risking process corruption.
+- **Remediation**: *Fixed in v0.4.24.* All instances of unconstrained `strncpy` were migrated to strict `memcpy` bounding limit configurations.
 
 ---
 

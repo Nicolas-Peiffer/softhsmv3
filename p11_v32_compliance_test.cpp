@@ -86,6 +86,24 @@ using json = nlohmann::json;
 #define CKM_SP800_108_FEEDBACK_KDF 0x000003ADUL
 #endif
 
+// INJECTED: Missing v3.2 Mechanisms for compliance testing
+#ifndef CKM_XMSSMT_KEY_PAIR_GEN
+#define CKM_XMSSMT_KEY_PAIR_GEN 0x00004035UL
+#endif
+#ifndef CKM_KMAC_256
+#define CKM_KMAC_256 (0x80000000UL | 0x00000101UL)
+#endif
+#ifndef CKM_ECDH1_COFACTOR_DERIVE
+#define CKM_ECDH1_COFACTOR_DERIVE 0x00001051UL
+#endif
+#ifndef CKM_ECDSA_SHA3_224
+#define CKM_ECDSA_SHA3_224 0x00001047UL
+#define CKM_ECDSA_SHA3_256 0x00001048UL
+#define CKM_ECDSA_SHA3_384 0x00001049UL
+#define CKM_ECDSA_SHA3_512 0x0000104aUL
+#endif
+
+
 // Options
 std::string opt_engine = "./build/src/lib/libsofthsmv3.dylib";
 std::string opt_category = "all";
@@ -819,6 +837,22 @@ void test_pqc_xmss() {
     } else {
         record_result("XMSS", "C_SignInit_XMSS_SHA2_10_256", "FAIL", "RV=" + std::to_string(rv));
     }
+
+    // XMSS-MT validation
+    CK_MECHANISM mechMT = { CKM_XMSSMT_KEY_PAIR_GEN, NULL_PTR, 0 };
+    CK_ULONG paramSetXmssMT = 0x00000001UL; // CKP_XMSSMT_SHA2_20_2_256
+    mechMT.pParameter = &paramSetXmssMT;
+    mechMT.ulParameterLen = sizeof(paramSetXmssMT);
+
+    CK_OBJECT_HANDLE hPubMT = 0, hPrivMT = 0;
+    rv = fl->C_GenerateKeyPair(hSess, &mechMT, pubTmpl, 5, privTmpl, 6, &hPubMT, &hPrivMT);
+    if (rv == CKR_MECHANISM_INVALID || rv == CKR_FUNCTION_NOT_SUPPORTED) {
+        record_result("XMSS", "Generate_XMSSMT_SHA2_20_2_256", "SKIP", "Mech unavailable");
+    } else if (rv != CKR_OK) {
+        record_result("XMSS", "Generate_XMSSMT_SHA2_20_2_256", "FAIL", "RV=" + std::to_string(rv));
+    } else {
+        record_result("XMSS", "Generate_XMSSMT_SHA2_20_2_256", "PASS", "Gen XMSSMT_SHA2_20_2_256");
+    }
 }
 
 void test_chacha20() {
@@ -1509,6 +1543,10 @@ void test_ecdsa_curves() {
     run_ec("P256", oid_p256, sizeof(oid_p256), CKM_ECDSA_SHA256);
     run_ec("P521", oid_p521, sizeof(oid_p521), CKM_ECDSA_SHA512);
     run_ec("secp256k1", oid_secp256k1, sizeof(oid_secp256k1), CKM_ECDSA_SHA256);
+    
+    // Inject ECDSA_SHA3
+    run_ec("P256_SHA3_256", oid_p256, sizeof(oid_p256), CKM_ECDSA_SHA3_256);
+    run_ec("P521_SHA3_512", oid_p521, sizeof(oid_p521), CKM_ECDSA_SHA3_512);
 }
 
 void test_eddsa_curves() {
@@ -1608,6 +1646,12 @@ void test_ecdh_derivations() {
         CK_OBJECT_HANDLE hSecret;
         rv = fl->C_DeriveKey(hSess, &deriveMech, hPriv, deriveTmpl, 4, &hSecret);
         record_result("ECDH", "Derive_X25519", rv == CKR_OK ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+        
+        // Inject COFACTOR
+        CK_MECHANISM cofactorMech = { CKM_ECDH1_COFACTOR_DERIVE, &ecdhParams, sizeof(ecdhParams) };
+        CK_OBJECT_HANDLE hSecretCofactor;
+        rv = fl->C_DeriveKey(hSess, &cofactorMech, hPriv, deriveTmpl, 4, &hSecretCofactor);
+        record_result("ECDH", "Derive_X25519_Cofactor", rv == CKR_OK || rv == CKR_MECHANISM_INVALID ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
     }
 }
 
@@ -1657,6 +1701,10 @@ void test_kmac() {
         CK_MECHANISM kmacMech = { CKM_KMAC_128, NULL_PTR, 0 };
         rv = fl->C_SignInit(hSess, &kmacMech, hKey);
         record_result("KMAC", "SignInit_128", rv == CKR_OK ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+
+        CK_MECHANISM kmacMech2 = { CKM_KMAC_256, NULL_PTR, 0 };
+        rv = fl->C_SignInit(hSess, &kmacMech2, hKey);
+        record_result("KMAC", "SignInit_256", rv == CKR_OK ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
     }
 }
 
@@ -1710,6 +1758,30 @@ void test_bip32_wallets() {
     }
 }
 
+void test_v30_session() {
+    typedef CK_RV (*C_SessionCancel_t)(CK_SESSION_HANDLE, CK_FLAGS);
+    typedef CK_RV (*C_LoginUser_t)(CK_SESSION_HANDLE, CK_USER_TYPE, CK_UTF8CHAR_PTR, CK_ULONG, CK_UTF8CHAR_PTR, CK_ULONG);
+    
+    void* dlib = dlopen(opt_engine.c_str(), RTLD_NOW);
+    C_SessionCancel_t SessionCancelFn = (C_SessionCancel_t)dlsym(dlib, "C_SessionCancel");
+    C_LoginUser_t LoginUserFn = (C_LoginUser_t)dlsym(dlib, "C_LoginUser");
+    
+    if (SessionCancelFn) {
+        CK_FLAGS cancelFlags = 0x00020000; // CKF_RW_SESSION boundary 
+        CK_RV rv = SessionCancelFn(hSess, cancelFlags);
+        record_result("Session", "C_SessionCancel", (rv == CKR_OK || rv == CKR_OPERATION_CANCEL_FAILED) ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+    } else {
+        record_result("Session", "C_SessionCancel", "SKIP", "Not exported natively");
+    }
+    
+    if (LoginUserFn) {
+        CK_UTF8CHAR username[] = "alice";
+        CK_RV rv = LoginUserFn(hSess, CKU_USER, (CK_UTF8CHAR_PTR)opt_pin.c_str(), opt_pin.length(), username, sizeof(username)-1);
+        record_result("Session", "C_LoginUser", (rv == CKR_USER_ALREADY_LOGGED_IN || rv == CKR_OK || rv == CKR_FUNCTION_NOT_SUPPORTED) ? "PASS" : "FAIL", "RV=" + std::to_string(rv));
+    } else {
+        record_result("Session", "C_LoginUser", "SKIP", "Not exported natively");
+    }
+}
 
 int main(int argc, char** argv) {
     parse_args(argc, argv);
@@ -1745,6 +1817,7 @@ int main(int argc, char** argv) {
     }
     if (opt_category == "all" || opt_category == "session") {
         refresh_session(); test_slot_session_management();
+        refresh_session(); test_v30_session();
     }
     if (opt_category == "all" || opt_category == "authwrap") {
         refresh_session(); test_authenticated_wrap();

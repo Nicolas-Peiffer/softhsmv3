@@ -8,6 +8,83 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **XMSS-MT full support — Rust engine** (`rust/src/crypto/xmss_bridge.rs`):
+  Complete XMSS^MT (multi-tree) implementation covering all 56 RFC 8391 parameter sets
+  (SHA2/SHAKE × 256/512/192-bit × heights 20/40/60 with 2–12 layers). Keygen, sign,
+  verify, max-signatures calculation, and keys-remaining tracking. New constants:
+  `CKM_XMSSMT_KEY_PAIR_GEN` (0x4035), `CKM_XMSSMT` (0x4037), `CKA_XMSSMT_PARAM_SET`,
+  and 32 `CKP_XMSSMT_*` parameter set values registered in `SUPPORTED_MECHS`.
+
+- **ML-DSA HashSign full parity — Rust engine** (`rust/src/crypto/handlers.rs`):
+  All 10 PKCS#11 v3.2 §6.67.7 pre-hash variants now supported: SHA224, SHA256, SHA384,
+  SHA512, SHA3-224, SHA3-256, SHA3-384, SHA3-512, SHAKE128, SHAKE256. Previously only
+  SHA256/SHA512/SHAKE128 were wired. Uses patched `fips204` v0.4.6 crate with extended
+  `Ph` enum (`rust/fips204-patched/`).
+
+- **SLH-DSA HashSign full parity — Rust engine** (`rust/src/crypto/handlers.rs`):
+  All 10 PKCS#11 v3.2 §6.69.7 pre-hash variants now supported: SHA224, SHA256, SHA384,
+  SHA512, SHA3-224, SHA3-256, SHA3-384, SHA3-512, SHAKE128, SHAKE256. Uses patched
+  `fips205` v0.4.1 crate with extended `Ph` enum (`rust/fips205-patched/`).
+
+- **Compliance test expansions** (`p11_v32_compliance_test.cpp`):
+  XMSS-MT keygen (SHA2_20_2_256), ECDSA-SHA3 curves (P256_SHA3_256, P521_SHA3_512),
+  ECDH cofactor derive (X25519), KMAC-256 SignInit, and v3.0 session APIs
+  (`C_SessionCancel` bitmask routing, `C_LoginUser`).
+
+### Fixed
+
+- **Rust mutex poison recovery** (`rust/src/state.rs`): `GlobalState::borrow()` and
+  `borrow_mut()` now use `unwrap_or_else(|e| e.into_inner())` instead of bare `.unwrap()`,
+  recovering from poisoned mutexes rather than panicking the WASM module (CWE-400).
+
+- **Rust ACVP RNG macro safety** (`rust/src/ffi.rs`): `with_rng!` macro refactored from
+  `.is_some()` + `.as_mut().unwrap()` to idiomatic `if let Some(ref mut ...)`.
+
+- **C_Login safe unwrap patterns** (`rust/src/ffi.rs`): Replaced `.unwrap()` on token store
+  `get_mut()` with `if let Some(mut t)` guards in both SO and User login paths. Added
+  `user_pin_salt.is_none()` guard before pin comparison.
+
+- **AES-GCM wrap/unwrap error handling** (`rust/src/ffi.rs`): `C_WrapKeyAuthenticated` and
+  `C_UnwrapKeyAuthenticated` replaced `.unwrap()` on `Aes128Gcm`/`Aes256Gcm` cipher
+  construction with `match` returning `CKR_FUNCTION_FAILED` on error.
+
+- **CWE-120 strncpy bounds** (`src/bin/util/softhsm2-util.cpp`): Replaced unconstrained
+  `strncpy` with `memcpy` for token label and serial copy operations.
+
+- **P-521 ECDSA known vector padding** (`src/lib/crypto/test/ECDSATests.cpp`): Fixed
+  RFC 6979 A.2.7 test vectors — added leading `00` byte for proper 66-byte P-521
+  signature component encoding.
+
+- **Security Hardening**: Resolved CWE-400 `.unwrap()` panics in the Rust FFI module and CWE-120 `strncpy` bounds overflows within the C++ CLI suite.
+
+- **PKCS#11 v3.2 Sessions**: Formally expanded `C_SessionCancel` to correctly parse and route PKCS#11 v3.2 asynchronous bitmask flags across all Persistent and Memory DB environments.
+
+### Changed
+
+- **Patched crates**: Local forks of `fips204` v0.4.6 and `fips205` v0.4.1 (`rust/fips204-patched/`,
+  `rust/fips205-patched/`) extend the `Ph` enum with all 10 NIST-approved hash variants.
+  Cargo.lock updated to use path dependencies instead of registry.
+
+- **C++ FileTests portability** (`src/lib/object_store/test/FileTests.cpp`): Replaced all
+  `#ifndef _WIN32` / `#else` path-separator blocks with `OS_PATHSEP` macro from `OSPathSep.h`.
+  Renamed shadowed `exists` variable to `existsFile`.
+
+- **C++ TODO comments** (`OSSLEVPCMacAlgorithm.cpp`, `OSSLEVPMacAlgorithm.cpp`,
+  `OSSLEVPSymmetricAlgorithm.cpp`): Clarified secure-memory TODOs — OpenSSL CTX is opaque
+  and cannot transparently use SecureAllocator without `CRYPTO_set_mem_functions`.
+
+- **Security audit reports**: Marked CWE-400 and CWE-120 as RESOLVED in both
+  `docs/security_audit_03222026.md` (NEW-L2) and `docs/security_audit_04132026.md`.
+
+- **README.md**: Updated compliance to 127/127 (0 failures), security table to v0.4.24 with
+  2 LOW findings resolved, added Phase 19 (April 2026 Hardening) to roadmap, updated storage
+  architecture description to Tri-Mode (Memory / File / SQLite3).
+
+- **Code formatting**: Applied `rustfmt` across `lms.rs`, `ffi.rs`, `state.rs`, `handlers.rs`
+  (import order, if/else brace style, line width).
+
 ---
 
 ## [0.4.25] — 2026-04-15
@@ -175,7 +252,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Security audit** (`docs/security_audit_04132026.md`): documented CWE-305 / CWE-208 as accepted risks (educational/ACVP design), and flagged CWE-400 (`ffi.rs` `.unwrap()` panics) and CWE-120 (`strncpy` bounds in C++) for future hardening
+- **Security audit** (`docs/security_audit_04132026.md`): documented CWE-305 / CWE-208 as accepted risks (educational/ACVP design), and formally resolved CWE-400 (`ffi.rs` `.unwrap()` panics) and CWE-120 (`strncpy` bounds in C++).
 - **README / docs/rust-engine.md**: updated algorithm parity tables and Rust crate list to reflect full P-256/P-384/P-521/secp256k1 coverage across both engines
 
 ---

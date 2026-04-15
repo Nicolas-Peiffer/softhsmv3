@@ -60,7 +60,7 @@ pub const CKK_SLH_DSA: u32 = 0x0000_004b;
 pub const CKK_HSS: u32 = 0x0000_0046; // HSS/LMS multi-level (standard)
 pub const CKK_XMSS: u32 = 0x0000_0047; // XMSS single-tree (standard)
 pub const CKK_XMSSMT: u32 = 0x0000_0048; // XMSS^MT multi-tree (standard)
-                                         // Vendor: single-level LMS (not in PKCS#11 v3.2 standard; same numeric space as CKK is separate from CKM)
+// Vendor: single-level LMS (not in PKCS#11 v3.2 standard; same numeric space as CKK is separate from CKM)
 
 // ── PKCS#11 Semantic Attribute Types ─────────────────────────────────────────
 
@@ -207,7 +207,7 @@ pub const CKM_EC_EDWARDS_KEY_PAIR_GEN: u32 = 0x0000_1055;
 pub const CKM_EC_MONTGOMERY_KEY_PAIR_GEN: u32 = 0x0000_1056; // PKCS#11 v3.2 §6.7 — X25519 keygen
 pub const CKM_EDDSA: u32 = 0x0000_1057;
 pub const CKM_EC_MONTGOMERY_KEY_DERIVE: u32 = 0x0000_1058; // Alias: ECDH1_DERIVE for X25519 keys
-                                                           // Internal-only: Ed25519ph (prehashed) — same PKCS#11 mechanism, dispatched via phFlag in params
+// Internal-only: Ed25519ph (prehashed) — same PKCS#11 mechanism, dispatched via phFlag in params
 pub const CKM_EDDSA_PH: u32 = 0xFFFF_1057;
 
 // AES
@@ -361,6 +361,8 @@ pub const SUPPORTED_MECHS: &[u32] = &[
     CKM_HSS,
     CKM_XMSS_KEY_PAIR_GEN,
     CKM_XMSS,
+    CKM_XMSSMT_KEY_PAIR_GEN,
+    CKM_XMSSMT,
     // Keccak-256 digest (G11 — Rust engine only)
     CKM_KECCAK_256,
 ];
@@ -397,8 +399,11 @@ pub const CKR_KEY_EXHAUSTED: u32 = 0x0000_0203; // PKCS#11 v3.2 — stateful key
 // HSS/LMS standard mechanisms (PKCS#11 v3.2 §6.14)
 pub const CKM_HSS_KEY_PAIR_GEN: u32 = 0x0000_4032;
 pub const CKM_HSS: u32 = 0x0000_4033;
-pub const CKM_XMSS_KEY_PAIR_GEN: u32 = 0x0000_4034;
-pub const CKM_XMSS: u32 = 0x0000_4036;
+// XMSS / XMSS-MT (PKCS#11 v3.2 §6.66 / §6.66)
+pub const CKM_XMSS_KEY_PAIR_GEN: u32 = 0x0000_4034; // pkcs11t.h §1222
+pub const CKM_XMSSMT_KEY_PAIR_GEN: u32 = 0x0000_4035; // pkcs11t.h §1222
+pub const CKM_XMSS: u32 = 0x0000_4036; // pkcs11t.h §1225
+pub const CKM_XMSSMT: u32 = 0x0000_4037; // pkcs11t.h §1224
 
 // Vendor: Keccak-256 digest (G11 — Ethereum address derivation, Rust engine only)
 pub const CKM_KECCAK_256: u32 = 0x8000_0010;
@@ -412,6 +417,7 @@ pub const CKA_LMOTS_PARAM_SET: u32 = 0x8000_0103; // CKP_LMOTS_SHA256_N32_W* val
 pub const CKA_XMSS_PARAM_SET: u32 = 0x8000_0104; // CKP_XMSS_* value
 pub const CKA_LEAF_INDEX: u32 = 0x8000_0105; // current leaf index (u64, little-endian)
 pub const CKA_XMSS_KEYS_REMAINING: u32 = 0x8000_0106; // remaining XMSS signature operations (u32, LE)
+pub const CKA_XMSSMT_PARAM_SET: u32 = 0x8000_0107; // CKP_XMSSMT_* value (RFC 8391 OID)
 
 // Standard multi-level HSS level-type attribute (PKCS#11 v3.2 §6.14)
 pub const CKA_HSS_LMS_TYPE: u32 = 0x0000_0618;
@@ -470,3 +476,41 @@ pub const CKP_XMSS_SHA2_20_256: u32 = 0x03;
 pub const CKP_XMSS_SHAKE_10_256: u32 = 0x11;
 pub const CKP_XMSS_SHAKE_16_256: u32 = 0x12;
 pub const CKP_XMSS_SHAKE_20_256: u32 = 0x13;
+
+// ── XMSS-MT Parameter Set Constants (RFC 8391 OIDs, matching C++ xmssmt_parse_oid) ──────────────
+// SHA2 / 256-bit (most common; selected subset for PKCS#11 v3.2 §6.66.6)
+pub const CKP_XMSSMT_SHA2_20_2_256: u32 = 0x01; // XMSSMT-SHA2_20/2_256
+pub const CKP_XMSSMT_SHA2_20_4_256: u32 = 0x02; // XMSSMT-SHA2_20/4_256
+pub const CKP_XMSSMT_SHA2_40_2_256: u32 = 0x03; // XMSSMT-SHA2_40/2_256
+pub const CKP_XMSSMT_SHA2_40_4_256: u32 = 0x04; // XMSSMT-SHA2_40/4_256
+pub const CKP_XMSSMT_SHA2_40_8_256: u32 = 0x05; // XMSSMT-SHA2_40/8_256
+pub const CKP_XMSSMT_SHA2_60_3_256: u32 = 0x06; // XMSSMT-SHA2_60/3_256
+pub const CKP_XMSSMT_SHA2_60_6_256: u32 = 0x07; // XMSSMT-SHA2_60/6_256
+pub const CKP_XMSSMT_SHA2_60_12_256: u32 = 0x08; // XMSSMT-SHA2_60/12_256
+// SHA2 / 512-bit
+pub const CKP_XMSSMT_SHA2_20_2_512: u32 = 0x09;
+pub const CKP_XMSSMT_SHA2_20_4_512: u32 = 0x0a;
+pub const CKP_XMSSMT_SHA2_40_2_512: u32 = 0x0b;
+pub const CKP_XMSSMT_SHA2_40_4_512: u32 = 0x0c;
+pub const CKP_XMSSMT_SHA2_40_8_512: u32 = 0x0d;
+pub const CKP_XMSSMT_SHA2_60_3_512: u32 = 0x0e;
+pub const CKP_XMSSMT_SHA2_60_6_512: u32 = 0x0f;
+pub const CKP_XMSSMT_SHA2_60_12_512: u32 = 0x10;
+// SHAKE-128 / 256-bit
+pub const CKP_XMSSMT_SHAKE_20_2_256: u32 = 0x11;
+pub const CKP_XMSSMT_SHAKE_20_4_256: u32 = 0x12;
+pub const CKP_XMSSMT_SHAKE_40_2_256: u32 = 0x13;
+pub const CKP_XMSSMT_SHAKE_40_4_256: u32 = 0x14;
+pub const CKP_XMSSMT_SHAKE_40_8_256: u32 = 0x15;
+pub const CKP_XMSSMT_SHAKE_60_3_256: u32 = 0x16;
+pub const CKP_XMSSMT_SHAKE_60_6_256: u32 = 0x17;
+pub const CKP_XMSSMT_SHAKE_60_12_256: u32 = 0x18;
+// SHAKE-128 / 512-bit
+pub const CKP_XMSSMT_SHAKE_20_2_512: u32 = 0x19;
+pub const CKP_XMSSMT_SHAKE_20_4_512: u32 = 0x1a;
+pub const CKP_XMSSMT_SHAKE_40_2_512: u32 = 0x1b;
+pub const CKP_XMSSMT_SHAKE_40_4_512: u32 = 0x1c;
+pub const CKP_XMSSMT_SHAKE_40_8_512: u32 = 0x1d;
+pub const CKP_XMSSMT_SHAKE_60_3_512: u32 = 0x1e;
+pub const CKP_XMSSMT_SHAKE_60_6_512: u32 = 0x1f;
+pub const CKP_XMSSMT_SHAKE_60_12_512: u32 = 0x20;

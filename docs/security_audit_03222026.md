@@ -254,11 +254,12 @@ Same timing side-channel as NEW-M11 for KMAC verification.
 
 Mutually exclusive `else if` branches for cleanup. If multiple operation pointers are set simultaneously (programming error), only the first is cleaned up.
 
-#### NEW-L2: C_SessionCancel Ignores flags Parameter
+#### [RESOLVED] NEW-L2: C_SessionCancel Ignores flags Parameter
 
 **File:** `src/lib/SoftHSM_sessions.cpp`
 
 All operations cancelled regardless of which `CKF_*` flags the caller specified. Minor spec non-compliance.
+**Remediation:** *Fixed in v0.4.24.* Implemented rigorous bitmask dispatch routing validating active `SESSION_OP` algorithms natively against passed `CKF_*` PKCS#11 bounds within Database and Memory blocks.
 
 #### NEW-L3: File Open Without O_NOFOLLOW
 

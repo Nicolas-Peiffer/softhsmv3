@@ -765,11 +765,11 @@ bool findTokenDirectory(std::string basedir, std::string& tokendir, int umask, c
 
 		if (token->getTokenLabel(tokenLabel) && tokenLabel.size() <= sizeof(paddedTokenLabel))
 		{
-			strncpy((char*) paddedTokenLabel, (char*) tokenLabel.byte_str(), tokenLabel.size());
+			memcpy(paddedTokenLabel, tokenLabel.byte_str(), tokenLabel.size());
 		}
 		if (token->getTokenSerial(tokenSerial) && tokenSerial.size() <= sizeof(paddedTokenSerial))
 		{
-			strncpy((char*) paddedTokenSerial, (char*) tokenSerial.byte_str(), tokenSerial.size());
+			memcpy(paddedTokenSerial, tokenSerial.byte_str(), tokenSerial.size());
 		}
 
 		if (serial != NULL && label == NULL &&

@@ -12,18 +12,22 @@ use std::sync::{Mutex, MutexGuard};
 pub struct GlobalState<T>(pub Mutex<T>);
 
 impl<T> GlobalState<T> {
-    pub const fn new_const(t: T) -> Self { Self(Mutex::new(t)) }
-    pub fn new(t: T) -> Self { Self(Mutex::new(t)) }
+    pub const fn new_const(t: T) -> Self {
+        Self(Mutex::new(t))
+    }
+    pub fn new(t: T) -> Self {
+        Self(Mutex::new(t))
+    }
     pub fn with<R, F: FnOnce(&GlobalState<T>) -> R>(&self, f: F) -> R {
         f(self)
     }
     #[track_caller]
     pub fn borrow_mut(&self) -> MutexGuard<'_, T> {
-        self.0.lock().unwrap()
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
     #[track_caller]
     pub fn borrow(&self) -> MutexGuard<'_, T> {
-        self.0.lock().unwrap()
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -352,7 +356,7 @@ pub fn read_bool_attr(attrs: &Attributes, attr_type: u32) -> bool {
 /// - Generic secret (HMAC): first 3 bytes of SHA-256(key_value)
 /// - Asymmetric keys (public/private): first 3 bytes of SHA-256(CKA_VALUE)
 pub fn compute_kcv(attrs: &mut Attributes) {
-    use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
     use sha2::{Digest, Sha256};
 
     let class = attrs
