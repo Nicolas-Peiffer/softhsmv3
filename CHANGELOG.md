@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.4.26] — 2026-04-15
 
 ### Added
 
@@ -1052,7 +1052,9 @@ browsers and Node.js, with post-quantum cryptography support.
 - OpenSSL ENGINE API (replaced with EVP-only backend)
 - Autotools build system (replaced with CMake)
 
-[Unreleased]: https://github.com/pqctoday/softhsmv3/compare/v0.4.0...HEAD
+[0.4.26]: https://github.com/pqctoday/softhsmv3/compare/v0.4.25...v0.4.26
+[0.4.25]: https://github.com/pqctoday/softhsmv3/compare/v0.4.24...v0.4.25
+[0.4.24]: https://github.com/pqctoday/softhsmv3/compare/v0.4.0...v0.4.24
 [0.4.0]: https://github.com/pqctoday/softhsmv3/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/pqctoday/softhsmv3/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/pqctoday/softhsmv3/compare/v0.1.0...v0.2.0
