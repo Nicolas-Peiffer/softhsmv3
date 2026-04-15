@@ -34,6 +34,7 @@
 #include "P11Objects.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <openssl/x509.h>
 
 // CKC_OPENPGP was in PKCS#11 2.x but removed from v3.2 headers; keep for
 // backward-compatible object storage only (no crypto operations).
@@ -547,6 +548,50 @@ bool P11X509CertificateObj::init(OSObject *inobject)
 	attributes[attrNameHashAlgorithm->getType()] = attrNameHashAlgorithm;
 
 	return true;
+}
+
+// Save attributes and extract CKA_PUBLIC_KEY_INFO if possible
+CK_RV P11X509CertificateObj::saveTemplate(Token *token, bool isPrivate, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount, int op)
+{
+	CK_RV rv = P11CertificateObj::saveTemplate(token, isPrivate, pTemplate, ulAttributeCount, op);
+	if (rv != CKR_OK) return rv;
+
+	if (op == OBJECT_OP_CREATE && osobject != NULL)
+	{
+		if (osobject->attributeExists(CKA_VALUE))
+		{
+			ByteString certDER = osobject->getByteStringValue(CKA_VALUE);
+			if (certDER.size() > 0)
+			{
+				const unsigned char* p = certDER.const_byte_str();
+				X509* cert = d2i_X509(NULL, &p, certDER.size());
+				if (cert != NULL)
+				{
+					X509_PUBKEY* pubkey = X509_get_X509_PUBKEY(cert);
+					if (pubkey != NULL)
+					{
+						unsigned char* spki_der = NULL;
+						int spki_len = i2d_X509_PUBKEY(pubkey, &spki_der);
+						if (spki_len > 0 && spki_der != NULL)
+						{
+							ByteString spki((unsigned char*)spki_der, spki_len);
+							OPENSSL_free(spki_der);
+							
+							if (osobject->startTransaction())
+							{
+								OSAttribute attrSpki(spki);
+								osobject->setAttribute(CKA_PUBLIC_KEY_INFO, attrSpki);
+								osobject->commitTransaction();
+							}
+						}
+					}
+					X509_free(cert);
+				}
+			}
+		}
+	}
+	
+	return CKR_OK;
 }
 
 // Constructor

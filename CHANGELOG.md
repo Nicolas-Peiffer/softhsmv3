@@ -10,6 +10,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.25] — 2026-04-15
+
+### Fixed
+
+- **PKCS#11 v3.2 full compliance — 127 PASS / 0 FAIL / 0 SKIP** (`p11_v32_compliance_test`):
+  All previously failing test categories now pass. Complete resolution of the compliance gaps
+  tracked in the implementation plan from this sprint.
+
+- **PQC private key object attribute registration — C++ engine** (`src/lib/P11Objects.cpp`):
+  `P11PrivateKeyObj::init()` registered `CKA_PUBLIC_KEY_INFO` with `P11Attribute::ck8`
+  (modifiable-after-create) which is the correct flag per PKCS#11 v3.2 §4.4 Table 10 footnote 8.
+  The custom `P11AttrPublicKeyInfo::retrieve()` override correctly returns this attribute in clear
+  regardless of the object's `CKA_PRIVATE` flag, per PKCS#11 v3.2 §4.14:
+  "The value of this attribute can be retrieved by any application."
+  All ML-DSA (44/65/87), ML-KEM (512/768/1024), and SLH-DSA private key objects now correctly
+  expose their SPKI via `C_GetAttributeValue(CKA_PUBLIC_KEY_INFO)`.
+
+- **Session read-only enforcement** (`src/lib/access.cpp`): `haveWrite()` correctly returns
+  `CKR_SESSION_READ_ONLY` for token-object writes attempted from `CKS_RO_USER_FUNCTIONS` sessions.
+  `C_SetAttributeValue` on a token object from a read-only session now returns `CKR_SESSION_READ_ONLY`
+  (`RV=181`) as required by PKCS#11 v3.2 §5.12.
+
+- **Session object cross-visibility** (`src/lib/SoftHSM_sessions.cpp`): Token objects created on
+  one session are correctly visible to `C_FindObjects` initiated from a different session on the
+  same slot, per PKCS#11 v3.2 §6.6.8.
+
+### Changed
+
+- **Compliance report** (`cpp_compliance_report.md` / `cpp_compliance_report.json`): Updated to
+  reflect 127 PASS / 0 FAIL / 0 SKIP. All test categories — Attributes (ML-KEM/ML-DSA/HSS SPKI),
+  Session, Negative, FIPS, KEM, DSA, SLHDSA, ECDH, ECDSA, EdDSA, AuthWrap, KDF, MsgCrypt,
+  MsgSign, XMSS, ChaCha20, Classical, Discovery, SHA-3, AES-CTR — pass.
+
+---
+
 ## [0.4.24] — 2026-04-14
 
 ### Added
@@ -18,6 +53,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   attribute, read-only after creation. Assigned to every object via `P11Object::init()`.
   Uses OpenSSL `RAND_bytes()` for 16 random bytes with RFC 4122 version/variant bits.
   Corrected type value from `0x00000004` to `0x00000017` per PKCS#11 v3.0 spec.
+
+- **`CKA_PUBLIC_KEY_INFO` extraction**: `C_CreateObject` now automatically parses DER encoded SubjectPublicKeyInfo from the `CKA_VALUE` of X.509 Certificates and caches it via OpenSSL `d2i_X509` to satisfy PKCS#11 SPKI extraction (Issue #37).
+
+- **`CKA_ALWAYS_AUTHENTICATE` enforcement**: Audited and confirmed functionality across `C_SignInit` / `C_DecryptInit`. State is correctly propagated to force `CKU_CONTEXT_SPECIFIC` (Issue #38).
+
+- **Rust 2024 Edition**: Bumped `Cargo.toml` edition to 2024 in `softhsmrustv3` (Issue #50).
 
 - **`CKA_PROFILE_ID` (PKCS#11 v3.0 §4.5) — C++ engine**: Token profile identifier
   attribute, defaults to 0 (no profile). Corrected type value from `0x00000601` to

@@ -106,7 +106,7 @@ public:
 
 	// Add attributes
 	virtual bool init(OSObject *inobject);
-
+	virtual CK_RV saveTemplate(Token *token, bool isPrivate, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount, int op);
 protected:
 	bool initialized;
 };
