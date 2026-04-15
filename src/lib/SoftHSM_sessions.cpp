@@ -246,8 +246,8 @@ CK_RV SoftHSM::C_LoginUser(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
 // C_SessionCancel — Cancel one or more active cryptographic operations in the
 // session (PKCS#11 v3.0 §5.6.7).  flags is a bitmask of CKF_* operation types
 // (0 = cancel all).  softhsmv3 supports exactly one active operation per
-// session, so all active operations are always cancelled together.
-CK_RV SoftHSM::C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS /*flags*/)
+// session, so all active operations are always cancelled together if the type matches.
+CK_RV SoftHSM::C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS flags)
 {
 	if (!isInitialised) return CKR_CRYPTOKI_NOT_INITIALIZED;
 
@@ -255,8 +255,43 @@ CK_RV SoftHSM::C_SessionCancel(CK_SESSION_HANDLE hSession, CK_FLAGS /*flags*/)
 	Session* session = sessionGuard.get();
 	if (session == NULL) return CKR_SESSION_HANDLE_INVALID;
 
-	if (session->getOpType() != SESSION_OP_NONE)
-		session->resetOp();
+	int opType = session->getOpType();
+	if (opType == SESSION_OP_NONE)
+		return CKR_OPERATION_CANCEL_FAILED;
+
+	bool match = false;
+	if (flags == 0) {
+		match = true;
+	} else {
+		// Map SoftHSM operational types to PKCS#11 CKF_* bitmasks
+		if ((flags & CKF_ENCRYPT) && (opType == SESSION_OP_ENCRYPT || opType == SESSION_OP_MESSAGE_ENCRYPT || opType == SESSION_OP_MESSAGE_ENCRYPT_BEGIN))
+			match = true;
+		if ((flags & CKF_DECRYPT) && (opType == SESSION_OP_DECRYPT || opType == SESSION_OP_MESSAGE_DECRYPT || opType == SESSION_OP_MESSAGE_DECRYPT_BEGIN))
+			match = true;
+		if ((flags & CKF_SIGN) && (opType == SESSION_OP_SIGN || opType == SESSION_OP_MESSAGE_SIGN || opType == SESSION_OP_MESSAGE_SIGN_BEGIN || opType == SESSION_OP_SIGN_RECOVER))
+			match = true;
+		if ((flags & CKF_VERIFY) && (opType == SESSION_OP_VERIFY || opType == SESSION_OP_MESSAGE_VERIFY || opType == SESSION_OP_MESSAGE_VERIFY_BEGIN || opType == SESSION_OP_VERIFY_RECOVER || opType == SESSION_OP_VERIFY_SIGNATURE))
+			match = true;
+		if ((flags & CKF_DIGEST) && (opType == SESSION_OP_DIGEST))
+			match = true;
+
+		// Dual operations map to both layers simultaneously
+		if ((flags & CKF_DIGEST) && (opType == SESSION_OP_DIGEST_ENCRYPT || opType == SESSION_OP_DECRYPT_DIGEST))
+			match = true;
+		if ((flags & CKF_ENCRYPT) && (opType == SESSION_OP_DIGEST_ENCRYPT || opType == SESSION_OP_SIGN_ENCRYPT))
+			match = true;
+		if ((flags & CKF_DECRYPT) && (opType == SESSION_OP_DECRYPT_DIGEST || opType == SESSION_OP_DECRYPT_VERIFY))
+			match = true;
+		if ((flags & CKF_SIGN) && (opType == SESSION_OP_SIGN_ENCRYPT))
+			match = true;
+		if ((flags & CKF_VERIFY) && (opType == SESSION_OP_DECRYPT_VERIFY))
+			match = true;
+	}
+
+	if (!match)
+		return CKR_OPERATION_CANCEL_FAILED;
+
+	session->resetOp();
 
 	return CKR_OK;
 }

@@ -44,6 +44,7 @@ class SessionTests : public TestsNoPINInitBase
 	CPPUNIT_TEST(testCloseSession);
 	CPPUNIT_TEST(testCloseAllSessions);
 	CPPUNIT_TEST(testGetSessionInfo);
+	CPPUNIT_TEST(testSessionCancel);
 	CPPUNIT_TEST_SUITE_END();
 
 public:
@@ -51,6 +52,7 @@ public:
 	void testCloseSession();
 	void testCloseAllSessions();
 	void testGetSessionInfo();
+	void testSessionCancel();
 };
 
 #endif // !_SOFTHSM_V2_SESSIONTESTS_H

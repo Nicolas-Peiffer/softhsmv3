@@ -174,3 +174,55 @@ void SessionTests::testGetSessionInfo()
     rv = CRYPTOKI_F_PTR( C_GetSessionInfo(hSession, &info) );
 	CPPUNIT_ASSERT(rv == CKR_SESSION_HANDLE_INVALID);
 }
+
+void SessionTests::testSessionCancel()
+{
+	CK_RV rv;
+	CK_SESSION_HANDLE hSession = CK_INVALID_HANDLE;
+
+	// Just make sure that we finalize any previous tests
+	CRYPTOKI_F_PTR( C_Finalize(NULL_PTR) );
+
+	rv = CRYPTOKI_F_PTR( C_Initialize(NULL_PTR) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	rv = CRYPTOKI_F_PTR( C_OpenSession(m_initializedTokenSlotID, CKF_SERIAL_SESSION, NULL_PTR, NULL_PTR, &hSession) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	// 1. Empty abort: Session has no active operations
+	rv = CRYPTOKI_F_PTR( C_SessionCancel(hSession, 0) );
+	CPPUNIT_ASSERT(rv == CKR_OPERATION_CANCEL_FAILED);
+
+	// Initialize a Digest operation
+	CK_MECHANISM mechanism = { CKM_SHA256, NULL_PTR, 0 };
+	rv = CRYPTOKI_F_PTR( C_DigestInit(hSession, &mechanism) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	// 2. Mismatch abort: cancelling ENCRYPT when only DIGEST is running
+	rv = CRYPTOKI_F_PTR( C_SessionCancel(hSession, CKF_ENCRYPT) );
+	CPPUNIT_ASSERT(rv == CKR_OPERATION_CANCEL_FAILED);
+
+	// 3. Strict abort: cancel DIGEST
+	rv = CRYPTOKI_F_PTR( C_SessionCancel(hSession, CKF_DIGEST) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	// Digest should now fail because it was cancelled
+	CK_BYTE data[] = "test";
+	CK_BYTE digest[32];
+	CK_ULONG digestLen = sizeof(digest);
+	rv = CRYPTOKI_F_PTR( C_Digest(hSession, data, sizeof(data) - 1, digest, &digestLen) );
+	CPPUNIT_ASSERT(rv == CKR_OPERATION_NOT_INITIALIZED);
+
+	// 4. Universal abort
+	rv = CRYPTOKI_F_PTR( C_DigestInit(hSession, &mechanism) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	rv = CRYPTOKI_F_PTR( C_SessionCancel(hSession, 0) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+
+	rv = CRYPTOKI_F_PTR( C_Digest(hSession, data, sizeof(data) - 1, digest, &digestLen) );
+	CPPUNIT_ASSERT(rv == CKR_OPERATION_NOT_INITIALIZED);
+
+	rv = CRYPTOKI_F_PTR( C_CloseSession(hSession) );
+	CPPUNIT_ASSERT(rv == CKR_OK);
+}
