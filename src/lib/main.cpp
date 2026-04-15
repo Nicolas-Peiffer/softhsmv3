@@ -1818,14 +1818,14 @@ PKCS_API CK_RV C_AsyncComplete(CK_SESSION_HANDLE /*hSession*/,
 	CK_UTF8CHAR_PTR pFunctionName, CK_ASYNC_DATA_PTR pResult)
 {
 	if (pFunctionName == NULL_PTR || pResult == NULL_PTR) return CKR_ARGUMENTS_BAD;
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	return CKR_OPERATION_NOT_INITIALIZED;
 }
 
 PKCS_API CK_RV C_AsyncGetID(CK_SESSION_HANDLE /*hSession*/,
 	CK_UTF8CHAR_PTR pFunctionName, CK_ULONG_PTR pulID)
 {
 	if (pFunctionName == NULL_PTR || pulID == NULL_PTR) return CKR_ARGUMENTS_BAD;
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	return CKR_OPERATION_NOT_INITIALIZED;
 }
 
 PKCS_API CK_RV C_AsyncJoin(CK_SESSION_HANDLE /*hSession*/,
@@ -1833,7 +1833,7 @@ PKCS_API CK_RV C_AsyncJoin(CK_SESSION_HANDLE /*hSession*/,
 	CK_BYTE_PTR /*pData*/, CK_ULONG /*ulData*/)
 {
 	if (pFunctionName == NULL_PTR) return CKR_ARGUMENTS_BAD;
-	return CKR_FUNCTION_NOT_SUPPORTED;
+	return CKR_OPERATION_NOT_INITIALIZED;
 }
 
 // ---------------------------------------------------------------------------

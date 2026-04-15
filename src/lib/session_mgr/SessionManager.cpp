@@ -81,7 +81,8 @@ CK_RV SessionManager::openSession
 
 	// Create the session
 	bool rwSession = ((flags & CKF_RW_SESSION) == CKF_RW_SESSION) ? true : false;
-	auto session = std::make_shared<Session>(slot, rwSession, pApplication, notify);
+	bool asyncSession = ((flags & CKF_ASYNC_SESSION) == CKF_ASYNC_SESSION) ? true : false;
+	auto session = std::make_shared<Session>(slot, rwSession, asyncSession, pApplication, notify);
 
 	// First fill any empty spot in the list
 	for (size_t i = 0; i < sessions.size(); i++)

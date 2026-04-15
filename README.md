@@ -699,6 +699,15 @@ SoftHSMv3 introduces a **Tri-Mode Storage Architecture** to support ephemeral, f
   - [x] C++: `P11AttrParameterSet` and HSS attribute base constructors — removed erroneous hardcoded `ck1`; flags now set exclusively at call site
   - [x] C++: `Slot::isTokenPresent()` returns `token->isInitialized()` — uninitialized slots excluded from `C_GetSlotList(tokenPresent=TRUE)`
 
+## OpenSSL 3 Provider (`pkcs11-provider`)
+
+SoftHSMv3 vendors and ships a heavily-modified fork of the Latchset `pkcs11-provider` to guarantee zero-configuration native OpenSSL 3.6 interoperability. This grants standard OpenSSL CLI operations (`genpkey`, `pkeyutl`, `req`, `x509`) transparent hardware-accelerated access to the internal PKCS#11 v3.2 boundaries without complex configuration wiring. 
+
+Key upgrades made to the integrated provider:
+- **ML-KEM Operations**: Full `OSSL_OP_KEM` dispatch bindings allowing `pkeyutl -encap` and `-decap` routines to successfully flow down to the hardware `C_EncapsulateKey` implementations.
+- **ML-DSA Signatures**: Native routing for FIPS 204 Parameter Sets (`ML-DSA-44`, `ML-DSA-65`, `ML-DSA-87`) linking `OSSL_OP_SIGNATURE` seamlessly to the HSM via robust Context mappings.
+- **Asynchronous Mode Simulation**: Bypasses synchronous blocking failures by transparently asserting `CKF_ASYNC_SESSION` support during instantiation and reliably emitting `CKR_OPERATION_NOT_INITIALIZED` on all async polls, fully unblocking strictly asynchronous networking gateways.
+
 ## Building (Native)
 
 ```bash

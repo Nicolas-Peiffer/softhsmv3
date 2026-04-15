@@ -69,7 +69,7 @@
 class Session
 {
 public:
-	Session(Slot* inSlot, bool inIsReadWrite, CK_VOID_PTR inPApplication, CK_NOTIFY inNotify);
+	Session(Slot* inSlot, bool inIsReadWrite, bool inIsAsync, CK_VOID_PTR inPApplication, CK_NOTIFY inNotify);
 
 	// Destructor
 	virtual ~Session();
@@ -82,6 +82,7 @@ public:
 	CK_RV getInfo(CK_SESSION_INFO_PTR pInfo);
 	bool isRW();
 	CK_STATE getState();
+	bool isAsync();
 	void setHandle(CK_SESSION_HANDLE inHSession);
 	CK_SESSION_HANDLE getHandle();
 
@@ -163,6 +164,7 @@ private:
 
 	// Session properties
 	bool isReadWrite;
+	bool isAsyncSession;
 	CK_SESSION_HANDLE hSession;
 
 	// Operations

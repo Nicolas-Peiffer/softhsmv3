@@ -34,11 +34,12 @@
 #include "Session.h"
 
 // Constructor
-Session::Session(Slot* inSlot, bool inIsReadWrite, CK_VOID_PTR inPApplication, CK_NOTIFY inNotify)
+Session::Session(Slot* inSlot, bool inIsReadWrite, bool inIsAsync, CK_VOID_PTR inPApplication, CK_NOTIFY inNotify)
 {
 	slot = inSlot;
 	token = slot->getToken();
 	isReadWrite = inIsReadWrite;
+	isAsyncSession = inIsAsync;
 	hSession = CK_INVALID_HANDLE;
 	pApplication = inPApplication;
 	notify = inNotify;
@@ -68,6 +69,7 @@ Session::Session()
 	slot = NULL;
 	token = NULL;
 	isReadWrite = false;
+	isAsyncSession = false;
 	hSession = CK_INVALID_HANDLE;
 	pApplication = NULL;
 	notify = NULL;
@@ -110,6 +112,10 @@ CK_RV Session::getInfo(CK_SESSION_INFO_PTR pInfo)
 	{
 		pInfo->flags |= CKF_RW_SESSION;
 	}
+	if (isAsync())
+	{
+		pInfo->flags |= CKF_ASYNC_SESSION;
+	}
 	pInfo->ulDeviceError = 0;
 
 	return CKR_OK;
@@ -119,6 +125,12 @@ CK_RV Session::getInfo(CK_SESSION_INFO_PTR pInfo)
 bool Session::isRW()
 {
 	return isReadWrite;
+}
+
+// Is an asynchronous session 
+bool Session::isAsync()
+{
+	return isAsyncSession;
 }
 
 // Get session state
