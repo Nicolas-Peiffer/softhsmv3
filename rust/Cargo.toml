@@ -1,6 +1,6 @@
 [package]
 name = "softhsmrustv3"
-version = "0.4.23"
+version = "0.4.25"
 edition = "2024"
 description = "A native Rust WebAssembly clone of SoftHSMv3"
 
@@ -51,9 +51,16 @@ hbs-lms = "0.1.1"
 
 # Keccak-256 (G11 — Ethereum address derivation)
 tiny-keccak = { version = "2.0", features = ["keccak"] }
+# xmss crate implements both XMSS and XMSS-MT (RFC 8391); no separate xmssmt crate needed
 xmss = "0.1.0-pre.0"
+# Patched fips204/fips205: adds missing Ph variants (SHA224/384/SHA3-*/SHAKE256) for
+# full PKCS#11 v3.2 §6.67.7 HashML-DSA and §6.69.7 HashSLH-DSA coverage
 fips204 = "0.4.6"
 fips205 = "0.4.1"
+
+[patch.crates-io]
+fips204 = { path = "fips204-patched" }
+fips205 = { path = "fips205-patched" }
 
 [profile.release]
 # Optimize purely for size in WASM
@@ -62,3 +69,4 @@ lto = true
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
+
