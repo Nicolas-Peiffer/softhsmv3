@@ -506,7 +506,7 @@ CK_RV Token::getTokenInfo(CK_TOKEN_INFO_PTR info)
 	char model[17];
 
 	snprintf(mfgID, 33, "SoftHSM project");
-	snprintf(model, 17, "SoftHSM v2");
+	snprintf(model, 17, "PQCToday");
 
 	memset(info->manufacturerID, ' ', 32);
 	memset(info->model, ' ', 16);

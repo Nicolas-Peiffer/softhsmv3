@@ -445,8 +445,8 @@ pub fn C_GetTokenInfo(_slot_id: u32, p_info: *mut u8) -> u32 {
     unsafe {
         std::ptr::write_bytes(p_info, 0x20, 160);
         write_fixed_str(p_info, 0, "SoftHSM3-Rust", 32);
-        write_fixed_str(p_info, 32, "PQC Today", 32);
-        write_fixed_str(p_info, 64, "softhsmrustv3", 16);
+        write_fixed_str(p_info, 32, "SoftHSM project", 32);
+        write_fixed_str(p_info, 64, "PQCToday", 16);
         write_fixed_str(p_info, 80, "0001", 16);
 
         let ptr = p_info as *mut u32;
