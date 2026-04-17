@@ -15,6 +15,15 @@
    - [5.6 Authenticated key wrap / unwrap (AES-GCM)](#56-authenticated-key-wrap--unwrap-aes-gcm)
    - [5.7 Pre-bound signature verification](#57-pre-bound-signature-verification)
 6. [Error handling conventions](#6-error-handling-conventions)
+7. [StrongSwan IKEv2 Adapter](#7-strongswan-ikev2-adapter-strongswan-pkcs11)
+   - [7.1 ML-KEM key exchange](#71-ml-kem-key-exchange)
+   - [7.2 ML-DSA signing constants](#72-ml-dsa-signing-constants)
+8. [Java JCE Integration](#8-java-jce-integration-javajce)
+   - [8.1 Architecture](#81-architecture)
+   - [8.2 Registration](#82-registration)
+   - [8.3 ML-DSA signing](#83-ml-dsa-signing)
+   - [8.4 ML-KEM key agreement](#84-ml-kem-key-agreement)
+   - [8.5 Deployment (Docker)](#85-deployment-docker)
 
 ---
 
@@ -760,6 +769,119 @@ Where:
 - `H(M)` = hash of the original message under the specified hash algorithm
 
 This encoding is transparent to callers — pass the raw message to `C_Sign` or `C_SignMessage` and softhsmv3 handles the pre-hash construction.
+
+---
+
+## 7. StrongSwan IKEv2 Adapter (`strongswan-pkcs11/`)
+
+The `strongswan-pkcs11/` directory provides a strongSwan-compatible PKCS#11 plugin adapter. It exposes softhsmv3 ML-KEM and ML-DSA operations to the IKEv2 key-exchange and authentication layers without modifying strongSwan core.
+
+### 7.1 ML-KEM key exchange
+
+The adapter implements `pkcs11_kem_t` using the PKCS#11 v3.2 KEM API:
+
+```c
+#include "strongswan-pkcs11/pkcs11_kem.h"
+
+// Find a token that supports CKM_ML_KEM, generate keypair
+pkcs11_kem_t *kem = pkcs11_kem_create(pkcs11_lib, ML_KEM_768);
+
+// Initiator: export public key → send to peer
+chunk_t pubkey = kem->get_public_key(kem);
+
+// Responder: receives pubkey, encapsulates shared secret via C_EncapsulateKey
+kem->set_public_key(kem, peer_pubkey);
+chunk_t shared_secret = kem->get_shared_secret(kem);
+
+// Initiator: receives ciphertext, decapsulates via C_DecapsulateKey
+kem->set_public_key(kem, ciphertext_from_responder);
+chunk_t shared_secret = kem->get_shared_secret(kem);
+```
+
+Both paths call into softhsmv3's `C_EncapsulateKey` / `C_DecapsulateKey` (PKCS#11 v3.2 §5.17).
+
+### 7.2 ML-DSA signing constants
+
+`strongswan-pkcs11/pkcs11.h` adds the PKCS#11 v3.2 ML-DSA constants needed for the IKEv2 AUTH payload:
+
+```c
+#define CKK_ML_DSA              (0x0000004aUL)  // key type
+#define CKM_ML_DSA_KEY_PAIR_GEN (0x0000001cUL)  // key generation
+#define CKM_ML_DSA              (0x0000001dUL)  // sign / verify
+```
+
+Pass `CKM_ML_DSA_KEY_PAIR_GEN` in the mechanism during `C_GenerateKeyPair`, set `CKA_PARAMETER_SET` to `CKP_ML_DSA_44`, `CKP_ML_DSA_65`, or `CKP_ML_DSA_87`, then sign IKEv2 AUTH payloads with `CKM_ML_DSA` via the standard `C_SignInit` / `C_Sign` path.
+
+---
+
+## 8. Java JCE Integration (`JavaJCE/`)
+
+The `JavaJCE/` module lets JCA-based applications (Hyperledger Besu, Spring Security, any JCA consumer) call softhsmv3 ML-DSA signing and ML-KEM key agreement through the standard Java `Signature` and `KeyAgreement` APIs.
+
+### 8.1 Architecture
+
+```
+Application code
+    │ Signature.getInstance("ML-DSA-65")
+    ▼
+SoftHSMJCEProvider (JavaJCE/src/…/SoftHSMJCEProvider.java)
+    │ looks up registered SPI
+    ▼
+MLDSASignatureSpi (JavaJCE/src/…/MLDSASignatureSpi.java)
+    │ translates to CKM_ML_DSA (0x0000001d)
+    ▼
+SunPKCS11 (patched JNI — accepts 0x1c/0x1d PKCS#11 v3.2 constants)
+    │ C_SignInit / C_Sign
+    ▼
+libsofthsm3.so
+```
+
+### 8.2 Registration
+
+```java
+// Register at application startup (before any crypto calls)
+import java.security.Security;
+import org.softhsmv3.jce.SoftHSMJCEProvider;
+
+Security.addProvider(new SoftHSMJCEProvider());
+```
+
+### 8.3 ML-DSA signing
+
+```java
+Signature sig = Signature.getInstance("ML-DSA-65");
+sig.initSign(privateKey);   // privateKey is a PKCS11 key ref from SunPKCS11
+sig.update(message);
+byte[] signature = sig.sign();
+
+Signature ver = Signature.getInstance("ML-DSA-65");
+ver.initVerify(publicKey);
+ver.update(message);
+boolean valid = ver.verify(signature);
+```
+
+### 8.4 ML-KEM key agreement
+
+```java
+KeyAgreement ka = KeyAgreement.getInstance("ML-KEM-768");
+ka.init(privateKey);
+ka.doPhase(peerPublicKey, true);
+byte[] sharedSecret = ka.generateSecret();
+```
+
+### 8.5 Deployment (Docker)
+
+The module must be compiled inside the patched JRE environment (the one that knows about `CKM_ML_DSA` = `0x1d`):
+
+```dockerfile
+COPY JavaJCE /JavaJCE
+RUN find /JavaJCE/src -name "*.java" > /tmp/sources.txt \
+ && javac -cp /opt/jre/lib/ext/sunpkcs11.jar \
+          -d /build/javajce @/tmp/sources.txt \
+ && jar -cf /opt/besu/lib/javajce-softhsm.jar -C /build/javajce .
+```
+
+Add the JAR to the Besu classpath; no further configuration is required once `SoftHSMJCEProvider` is registered.
 
 ---
 

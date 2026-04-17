@@ -91,6 +91,8 @@ import CK from '@pqctoday/softhsm-wasm/constants'
 | WASM build | Not supported | **Emscripten + Rust `wasm32-unknown-unknown`** |
 | Rust WASM engine | N/A | **Pure Rust (~1.4 MB), drop-in parity** |
 | npm package | N/A | **@pqctoday/softhsm-wasm** |
+| StrongSwan IKEv2 ML-DSA | Not supported | **`strongswan-pkcs11/` adapter** — `CKK_ML_DSA` (0x4a), `CKM_ML_DSA_KEY_PAIR_GEN` (0x1c), `CKM_ML_DSA` (0x1d) |
+| Java JCE / Besu integration | Not supported | **`JavaJCE/` layer** — routes JCA `ML-DSA-65` and `ML-KEM-768` requests to softhsmv3 via patched SunPKCS11 |
 
 ## PQC Algorithms
 
@@ -383,7 +385,7 @@ A formal security audit was conducted in March 2026 covering C++ memory safety, 
 **v0.4.24 status: all HIGH and MEDIUM findings resolved, remaining LOW findings patched.**
 
 | Severity | Original | Fixed in v0.4.24 | Remaining |
-|----------|----------|------------------|-----------|
+| --- | --- | --- | --- |
 | Critical | 3 | 3 | 0 |
 | High | 10 | 10 | 0 |
 | Medium | 14 | 14 | 0 |
@@ -699,14 +701,131 @@ SoftHSMv3 introduces a **Tri-Mode Storage Architecture** to support ephemeral, f
   - [x] C++: `P11AttrParameterSet` and HSS attribute base constructors — removed erroneous hardcoded `ck1`; flags now set exclusively at call site
   - [x] C++: `Slot::isTokenPresent()` returns `token->isInitialized()` — uninitialized slots excluded from `C_GetSlotList(tokenPresent=TRUE)`
 
+## Integration Interfaces
+
+SoftHSMv3 exposes four integration interfaces that cover the full stack from browser WASM to enterprise infrastructure:
+
+| Interface | Location | Use case |
+| --- | --- | --- |
+| **Direct PKCS#11** | `libsofthsm3.so` / npm | Native C/C++ / Node.js — load via `dlopen` + `C_GetFunctionList` |
+| **OpenSSL 3.x Provider** | `src/vendor/pkcs11-provider/` | Transparent routing from any `openssl` CLI or linked app |
+| **StrongSwan Adapter** | `strongswan-pkcs11/` | IKEv2 VPN — ML-KEM-768 key exchange + ML-DSA signing |
+| **Java JCE Layer** | `JavaJCE/` | Hyperledger Besu and JCA-based apps — ML-DSA-65 / ML-KEM-768 |
+
+---
+
 ## OpenSSL 3 Provider (`pkcs11-provider`)
 
-SoftHSMv3 vendors and ships a heavily-modified fork of the Latchset `pkcs11-provider` to guarantee zero-configuration native OpenSSL 3.6 interoperability. This grants standard OpenSSL CLI operations (`genpkey`, `pkeyutl`, `req`, `x509`) transparent hardware-accelerated access to the internal PKCS#11 v3.2 boundaries without complex configuration wiring. 
+SoftHSMv3 vendors and ships a heavily-modified fork of the [Latchset `pkcs11-provider`](https://github.com/latchset/pkcs11-provider) (`src/vendor/latchset/`) to guarantee zero-configuration native OpenSSL 3.6 interoperability. This grants standard OpenSSL CLI operations (`genpkey`, `pkeyutl`, `req`, `x509`) transparent hardware-accelerated access to the internal PKCS#11 v3.2 boundaries without complex configuration wiring.
 
 Key upgrades made to the integrated provider:
+
 - **ML-KEM Operations**: Full `OSSL_OP_KEM` dispatch bindings allowing `pkeyutl -encap` and `-decap` routines to successfully flow down to the hardware `C_EncapsulateKey` implementations.
 - **ML-DSA Signatures**: Native routing for FIPS 204 Parameter Sets (`ML-DSA-44`, `ML-DSA-65`, `ML-DSA-87`) linking `OSSL_OP_SIGNATURE` seamlessly to the HSM via robust Context mappings.
 - **Asynchronous Mode Simulation**: Bypasses synchronous blocking failures by transparently asserting `CKF_ASYNC_SESSION` support during instantiation and reliably emitting `CKR_OPERATION_NOT_INITIALIZED` on all async polls, fully unblocking strictly asynchronous networking gateways.
+
+### Build option: `openssl_modulesdir`
+
+The vendored provider adds a meson option to override the OpenSSL provider module install path:
+
+```bash
+cd src/vendor/pkcs11-provider
+meson setup build -Dopenssl_modulesdir=/opt/openssl-3.6/lib/ossl-modules
+ninja -C build install
+```
+
+This is required when using a custom or non-system OpenSSL build whose `modulesdir` is not reflected in pkg-config (common in Emscripten cross-compile environments and Docker sandboxes).
+
+---
+
+## StrongSwan IKEv2 Adapter (`strongswan-pkcs11/`)
+
+The `strongswan-pkcs11/` adapter extends strongSwan's native PKCS#11 plugin to support PKCS#11 v3.2 post-quantum operations for IKEv2.
+
+### ML-KEM Key Exchange
+
+The adapter implements `pkcs11_kem_t` using `C_EncapsulateKey` / `C_DecapsulateKey` (PKCS#11 v3.2 §5.17):
+
+```c
+// Initiator side — generates ML-KEM-768 keypair, returns public key
+pkcs11_kem_t *kem = pkcs11_kem_create(module, ML_KEM_768);
+chunk_t pubkey = kem->get_public_key(kem);    // sends to responder
+
+// Responder side — encapsulates shared secret against initiator pubkey
+kem->set_public_key(kem, pubkey_from_initiator);
+chunk_t ciphertext = ...;                      // from C_EncapsulateKey
+chunk_t shared_secret = kem->get_shared_secret(kem);
+
+// Initiator side — decapsulates received ciphertext
+kem->set_public_key(kem, ciphertext_from_responder);
+chunk_t shared_secret = kem->get_shared_secret(kem); // from C_DecapsulateKey
+```
+
+### ML-DSA Signing
+
+ML-DSA PKCS#11 v3.2 constants are defined in `strongswan-pkcs11/pkcs11.h`:
+
+```c
+#define CKK_ML_DSA              (0x0000004aUL)  // Key type
+#define CKM_ML_DSA_KEY_PAIR_GEN (0x0000001cUL)  // Key generation
+#define CKM_ML_DSA              (0x0000001dUL)  // Sign / Verify
+```
+
+These map directly to the softhsmv3 `C_SignInit` / `C_Sign` / `C_VerifyInit` / `C_Verify` dispatch for `CKM_ML_DSA`. Use the standard `CKA_PARAMETER_SET` attribute (`CKP_ML_DSA_44/65/87`) during key generation to select the security level.
+
+### Sandbox Integration Coverage
+
+The `softhsmv3_compatibility_report.md` documents integration pathways for all tools in the PQCToday sandbox:
+
+| Status | Tools |
+| --- | --- |
+| **Full** (via OpenSSL Provider or direct PKCS#11) | `openssl` CLI, strongSwan VPN, Easy-RSA, Nginx, ldnsutils, S/MIME, `pkcs11-tool` |
+| **Partial** (with workarounds) | OpenSSH (hardcoded KEM list — requires `ssh-agent` patch), QKD Toolkit, `testssl.sh` (passive) |
+| **Not compatible** (different runtime) | Sequoia (Rust native), IOTA identity.rs (Rust WASM), Geth Clef (Go Cgo), ns-3, SeQUeNCe |
+
+---
+
+## Java JCE Provider (`JavaJCE/`)
+
+The `JavaJCE/` module is a lightweight Java Security Provider that bridges JCA-based applications — including Hyperledger Besu — to softhsmv3 PKCS#11 v3.2 ML-DSA signing and ML-KEM key exchange.
+
+### Why it is needed
+
+Standard Java lacks frontend translation logic to convert high-level strings like `"ML-DSA-65"` into the `CKM_ML_DSA` (0x1d) integer used by the patched SunPKCS11 JNI. The `JavaJCE/` module intercepts JCA requests and performs that translation.
+
+### Components
+
+| File | Role |
+| --- | --- |
+| `SoftHSMJCEProvider.java` | Registers the provider with the JCA `Security` framework |
+| `MLDSASignatureSpi.java` | Intercepts `Signature.getInstance("ML-DSA-65")`, translates to `CKM_ML_DSA` (0x1d) + `C_SignInit` |
+| `MLKEMKeyAgreementSpi.java` | Intercepts `KeyAgreement.getInstance("ML-KEM-768")`, routes to `C_EncapsulateKey` / `C_DecapsulateKey` |
+| `PKCS11IntegrationTest.java` | Integration test validating round-trips against the compiled `libsofthsm3.so` |
+
+### Usage
+
+```java
+// Register the provider (typically in app bootstrap or Dockerfile entrypoint)
+Security.addProvider(new SoftHSMJCEProvider());
+
+// Standard JCA call — no PKCS#11 plumbing visible to application code
+Signature sig = Signature.getInstance("ML-DSA-65");
+sig.initSign(mlDsaPrivateKey);
+sig.update(message);
+byte[] signature = sig.sign();
+```
+
+### Deployment (Docker)
+
+The module is compiled inside `Dockerfile.physics` (the `playground-physics` sandbox container) using the patched JRE that holds the `CKM_ML_DSA` constants:
+
+```dockerfile
+COPY JavaJCE /JavaJCE
+RUN javac -cp /opt/jre/lib/ext/sunpkcs11.jar -d /build/javajce /JavaJCE/src/**/*.java \
+ && jar -cf /opt/besu/lib/javajce-softhsm.jar -C /build/javajce .
+```
+
+The resulting JAR is added to the Besu classpath so all `Signature`/`KeyAgreement` calls transparently route through softhsmv3.
 
 ## Building (Native)
 
@@ -716,6 +835,20 @@ mkdir build && cd build
 cmake .. -DWITH_CRYPTO_BACKEND=openssl -DENABLE_MLKEM=ON -DENABLE_MLDSA=ON
 make
 make check
+```
+
+### Building the OpenSSL Provider (optional, native only)
+
+```bash
+# Build and install the vendored pkcs11-provider against your system OpenSSL
+cd src/vendor/pkcs11-provider
+meson setup build
+ninja -C build
+ninja -C build install
+
+# If OpenSSL is installed to a non-standard prefix, override the module directory:
+meson setup build -Dopenssl_modulesdir=/opt/openssl-3.6/lib/ossl-modules
+ninja -C build install
 ```
 
 ## Building (WASM — C++/Emscripten)
