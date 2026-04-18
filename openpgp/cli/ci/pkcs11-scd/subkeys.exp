@@ -1,0 +1,48 @@
+#!/usr/bin/expect
+
+set fp [lindex $argv 0]
+set grip2 [lindex $argv 1]
+set grip3 [lindex $argv 2]
+
+spawn gpg --expert --edit-key $fp
+expect "gpg>"
+
+send -- "addkey\r"
+expect "Your selection?"
+send -- "13\r"
+expect "Enter the keygrip:"
+send -- "$grip2\r"
+expect "Your selection?"
+send -- "s\r"
+expect "Your selection?"
+send -- "q\r"
+expect "Key is valid for? (0)"
+send -- "\r"
+expect "Is this correct? (y/N)"
+send -- "y\r"
+expect "Really create? (y/N)"
+send -- "y\r"
+
+send -- "addkey\r"
+expect "Your selection?"
+send -- "13\r"
+expect "Enter the keygrip:"
+send -- "$grip3\r"
+expect "Your selection?"
+send -- "s\r"
+expect "Your selection?"
+send -- "e\r"
+expect "Your selection?"
+send -- "a\r"
+expect "Your selection?"
+send -- "q\r"
+expect "Key is valid for? (0)"
+send -- "\r"
+expect "Is this correct? (y/N)"
+send -- "y\r"
+expect "Really create? (y/N)"
+send -- "y\r"
+
+expect "gpg>"
+send -- "save\r"
+expect eof

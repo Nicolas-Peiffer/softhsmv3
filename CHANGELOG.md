@@ -10,6 +10,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **OpenPGP PKCS#11 bridge — vendored** (`openpgp/`): Vendored copy of
+  [`openpgp-pkcs11-sequoia`](https://codeberg.org/heiko/openpgp-pkcs11) v0.2 (LGPL-2.0-or-later,
+  Heiko Schaefer). Two Rust crates: `openpgp-pkcs11-sequoia` (library) and
+  `openpgp-pkcs11-tools` (CLI — `opgpkcs11`). Enables PKCS#11 devices (including softhsmv3) to
+  act as the cryptographic backend for Sequoia OpenPGP signing and decryption operations. Built
+  inside `Dockerfile.network` via `cargo install --path cli` and deployed as the OpenPGP scenario
+  backend in the pqctoday-sandbox `pqc-network` container.
+
+- **SSH ML-DSA-65 scenario validation** (`docker/` — no HSM source changes): softhsmv3's
+  `CKA_PUBLIC_KEY_INFO` (PKCS#11 v3.2 §4.9 SPKI) and `CKM_ML_DSA` (0x1d) signing were
+  validated end-to-end as the PKCS#11 backend for a custom-patched OpenSSH 10.3p1 implementing
+  draft-sfluhrer-ssh-mldsa-06. Both host-key signing (`HostKeyAgent` delegation) and client
+  user-key authentication (`ssh-pkcs11.c:pkcs11_fetch_mldsa_pubkey` + `pkcs11_sign_mldsa`) transit
+  `C_Sign(CKM_ML_DSA)` against the softhsmv3 token. All 9 host×client algorithm combinations
+  (ed25519, ecdsa-sha2-nistp256, ssh-mldsa-65) pass. No softhsmv3 source changes were required.
+
 - **JavaJCE translation layer** (`JavaJCE/`): Java JCE Security Provider that bridges
   Hyperledger Besu (and any JCA-based application) to softhsmv3 ML-DSA signing. Intercepts
   `Signature.getInstance("ML-DSA-65")` requests and translates them to `CKM_ML_DSA`

@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2023 Heiko Schaefer <heiko@schaefer.name>
+# SPDX-License-Identifier: CC0
+
+[workspace]
+members = [
+    "lib",
+    "cli",
+]

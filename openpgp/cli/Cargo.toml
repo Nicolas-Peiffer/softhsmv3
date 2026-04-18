@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2022-2023 Heiko Schaefer <heiko@schaefer.name>
+# SPDX-License-Identifier: CC0
+
+[package]
+name = "openpgp-pkcs11-tools"
+description = "A CLI tool for using PKCS #11 devices in an OpenPGP context."
+version = "0.0.2"
+repository = "https://codeberg.org/heiko/openpgp-pkcs11"
+authors = ["Heiko Schaefer <heiko@schaefer.name>"]
+license = "LGPL-2.0-or-later"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "cargo", "help"] }
+cryptoki = "0.4"
+env_logger = "0.10"
+log = "0.4"
+sequoia-openpgp = "1"
+
+openpgp-pkcs11-sequoia = { version = "0.2", path = "../lib" }
+openpgp-x509-sequoia = "0.2"

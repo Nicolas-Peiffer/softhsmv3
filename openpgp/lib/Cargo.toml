@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2022-2023 Heiko Schaefer <heiko@schaefer.name>
+# SPDX-License-Identifier: CC0
+
+[package]
+name = "openpgp-pkcs11-sequoia"
+description = "A library for using PKCS #11 devices in an OpenPGP context."
+version = "0.2.0"
+repository = "https://codeberg.org/heiko/openpgp-pkcs11"
+authors = ["Heiko Schaefer <heiko@schaefer.name>"]
+license = "LGPL-2.0-or-later"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+log = "0.4"
+
+openpgp-x509-sequoia = "0.2"
+
+asn1-rs = "0.5"
+cryptoki = "0.4"
+p256 = "0.13"
+p384 = "0.13"
+p521 = "0.13"
+picky-asn1-der = "0.4"
+picky-asn1-x509 = "0.9"
+rsa = "0.7"
+sequoia-openpgp = "1.21"
+x509 = "0.2"
+x509-certificate = "0.20"

@@ -1,0 +1,24 @@
+diff --git a/src/certificate.rs b/src/certificate.rs
+index 21e335e..0f0c9c9 100644
+--- a/src/certificate.rs
++++ b/src/certificate.rs
+@@ -365,6 +367,7 @@ impl Certificate {
+         yubikey: &mut YubiKey,
+         key: SlotId,
+         serial: impl Into<Serial>,
++        not_before: Option<DateTime<Utc>>,
+         not_after: Option<DateTime<Utc>>,
+         subject: &[RelativeDistinguishedName<'_>],
+         subject_pki: PublicKeyInfo,
+@@ -385,7 +388,10 @@ impl Certificate {
+                 &signature_algorithm,
+                 // Issuer and subject are the same in self-signed certificates.
+                 subject,
+-                Utc::now(),
++                match not_before {
++                    None => Utc::now(),
++                    Some(d) => d,
++                },
+                 not_after,
+                 subject,
+                 &subject_pki,
