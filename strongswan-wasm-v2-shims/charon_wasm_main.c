@@ -439,6 +439,120 @@ out:
     return result;
 }
 
+/* ── Cross-Worker ML-KEM stepwise API ────────────────────────────────────
+ * Phase 3d exposes the three KEM steps individually so a JS driver can run
+ * Alice and Bob in SEPARATE WASM instances (each in its own Worker with
+ * independent softhsmv3 state) and shuttle only the wire bytes between
+ * them. Proves two browser-side instances can actually interop via
+ * byte-level exchange — the foundation for a real IKE_SA_INIT handshake. */
+
+static key_exchange_t *g_ke = NULL;
+static chunk_t         g_secret = { NULL, 0 };  /* chunk_empty isn't a compile-time const */
+
+/* Alice step 1: generate ML-KEM-768 keypair, return public key into the
+ * caller-provided buffer. Returns the public-key length on success. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_kem_alice_init(unsigned char *out_pub, int out_cap)
+{
+    if (g_ke) { g_ke->destroy(g_ke); g_ke = NULL; }
+    g_ke = lib->crypto->create_ke(lib->crypto, ML_KEM_768);
+    if (!g_ke) { wasm_vpn_emit("error", "alice: create_ke failed"); return -1; }
+
+    chunk_t pub = chunk_empty;
+    if (!g_ke->get_public_key(g_ke, &pub)) {
+        wasm_vpn_emit("error", "alice: get_public_key failed");
+        return -1;
+    }
+    if ((int)pub.len > out_cap) {
+        chunk_free(&pub);
+        wasm_vpn_emit("error", "alice: out buffer too small");
+        return -1;
+    }
+    memcpy(out_pub, pub.ptr, pub.len);
+    int n = (int)pub.len;
+    chunk_free(&pub);
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "alice: keygen OK, pub=%d bytes", n);
+    wasm_vpn_emit("kem_step", msg);
+    return n;
+}
+
+/* Bob step: receive Alice's public key, encapsulate, write ciphertext to
+ * caller buffer, stash shared secret in g_secret. Returns ciphertext len. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_kem_bob_encap(const unsigned char *alice_pub, int alice_pub_len,
+                           unsigned char *out_ct, int out_ct_cap)
+{
+    if (g_ke) { g_ke->destroy(g_ke); g_ke = NULL; }
+    g_ke = lib->crypto->create_ke(lib->crypto, ML_KEM_768);
+    if (!g_ke) { wasm_vpn_emit("error", "bob: create_ke failed"); return -1; }
+
+    chunk_t pub = { (unsigned char *)alice_pub, (size_t)alice_pub_len };
+    if (!g_ke->set_public_key(g_ke, pub)) {
+        wasm_vpn_emit("error", "bob: set_public_key(alice_pub) failed");
+        return -1;
+    }
+
+    chunk_t ct = chunk_empty;
+    if (!g_ke->get_public_key(g_ke, &ct)) {  /* bob: returns ciphertext */
+        wasm_vpn_emit("error", "bob: get_public_key (ciphertext) failed");
+        return -1;
+    }
+    if ((int)ct.len > out_ct_cap) {
+        chunk_free(&ct);
+        wasm_vpn_emit("error", "bob: ct buffer too small");
+        return -1;
+    }
+    memcpy(out_ct, ct.ptr, ct.len);
+    int n = (int)ct.len;
+    chunk_free(&ct);
+
+    /* Store derived secret for later retrieval via wasm_vpn_kem_get_secret. */
+    chunk_free(&g_secret);
+    if (!g_ke->get_shared_secret(g_ke, &g_secret)) {
+        wasm_vpn_emit("error", "bob: get_shared_secret failed");
+        return -1;
+    }
+
+    char msg[80];
+    snprintf(msg, sizeof(msg),
+             "bob: encap OK, ct=%d bytes secret=%zu bytes", n, g_secret.len);
+    wasm_vpn_emit("kem_step", msg);
+    return n;
+}
+
+/* Alice step 2: receive Bob's ciphertext, decapsulate, stash secret. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_kem_alice_decap(const unsigned char *bob_ct, int bob_ct_len)
+{
+    if (!g_ke) { wasm_vpn_emit("error", "alice_decap: g_ke NULL"); return -1; }
+    chunk_t ct = { (unsigned char *)bob_ct, (size_t)bob_ct_len };
+    if (!g_ke->set_public_key(g_ke, ct)) {
+        wasm_vpn_emit("error", "alice: set_public_key(ct) failed");
+        return -1;
+    }
+    chunk_free(&g_secret);
+    if (!g_ke->get_shared_secret(g_ke, &g_secret)) {
+        wasm_vpn_emit("error", "alice: get_shared_secret failed");
+        return -1;
+    }
+    char msg[64];
+    snprintf(msg, sizeof(msg), "alice: decap OK, secret=%zu bytes", g_secret.len);
+    wasm_vpn_emit("kem_step", msg);
+    return (int)g_secret.len;
+}
+
+/* Return 32-byte stored shared secret to caller buffer. */
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_kem_get_secret(unsigned char *out, int out_cap)
+{
+    if (!g_secret.ptr || !g_secret.len) return -1;
+    if ((int)g_secret.len > out_cap) return -1;
+    memcpy(out, g_secret.ptr, g_secret.len);
+    return (int)g_secret.len;
+}
+
 EMSCRIPTEN_KEEPALIVE
 int wasm_vpn_shutdown(void)
 {

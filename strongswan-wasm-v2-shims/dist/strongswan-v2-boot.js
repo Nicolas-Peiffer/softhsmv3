@@ -448,7 +448,7 @@ function updateMemoryViews() {
   var b = wasmMemory.buffer;
   HEAP8 = new Int8Array(b);
   HEAP16 = new Int16Array(b);
-  HEAPU8 = new Uint8Array(b);
+  Module['HEAPU8'] = HEAPU8 = new Uint8Array(b);
   HEAPU16 = new Uint16Array(b);
   HEAP32 = new Int32Array(b);
   HEAPU32 = new Uint32Array(b);
@@ -6922,7 +6922,6 @@ missingLibrarySymbols.forEach(missingLibrarySymbol)
   'HEAPF32',
   'HEAPF64',
   'HEAP8',
-  'HEAPU8',
   'HEAP16',
   'HEAPU16',
   'HEAP32',
@@ -7198,6 +7197,10 @@ var _wasm_vpn_list_pqc_mechanisms = Module['_wasm_vpn_list_pqc_mechanisms'] = ma
 var _free = Module['_free'] = makeInvalidEarlyAccess('_free');
 var _wasm_vpn_ml_dsa_selftest = Module['_wasm_vpn_ml_dsa_selftest'] = makeInvalidEarlyAccess('_wasm_vpn_ml_dsa_selftest');
 var _wasm_vpn_ml_kem_selftest = Module['_wasm_vpn_ml_kem_selftest'] = makeInvalidEarlyAccess('_wasm_vpn_ml_kem_selftest');
+var _wasm_vpn_kem_alice_init = Module['_wasm_vpn_kem_alice_init'] = makeInvalidEarlyAccess('_wasm_vpn_kem_alice_init');
+var _wasm_vpn_kem_bob_encap = Module['_wasm_vpn_kem_bob_encap'] = makeInvalidEarlyAccess('_wasm_vpn_kem_bob_encap');
+var _wasm_vpn_kem_alice_decap = Module['_wasm_vpn_kem_alice_decap'] = makeInvalidEarlyAccess('_wasm_vpn_kem_alice_decap');
+var _wasm_vpn_kem_get_secret = Module['_wasm_vpn_kem_get_secret'] = makeInvalidEarlyAccess('_wasm_vpn_kem_get_secret');
 var _wasm_vpn_shutdown = Module['_wasm_vpn_shutdown'] = makeInvalidEarlyAccess('_wasm_vpn_shutdown');
 var _wasm_vpn_configure_json = Module['_wasm_vpn_configure_json'] = makeInvalidEarlyAccess('_wasm_vpn_configure_json');
 var _wasm_vpn_initiate = Module['_wasm_vpn_initiate'] = makeInvalidEarlyAccess('_wasm_vpn_initiate');
@@ -7267,6 +7270,10 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
   assert(typeof wasmExports['wasm_vpn_ml_dsa_selftest'] != 'undefined', 'missing Wasm export: wasm_vpn_ml_dsa_selftest');
   assert(typeof wasmExports['wasm_vpn_ml_kem_selftest'] != 'undefined', 'missing Wasm export: wasm_vpn_ml_kem_selftest');
+  assert(typeof wasmExports['wasm_vpn_kem_alice_init'] != 'undefined', 'missing Wasm export: wasm_vpn_kem_alice_init');
+  assert(typeof wasmExports['wasm_vpn_kem_bob_encap'] != 'undefined', 'missing Wasm export: wasm_vpn_kem_bob_encap');
+  assert(typeof wasmExports['wasm_vpn_kem_alice_decap'] != 'undefined', 'missing Wasm export: wasm_vpn_kem_alice_decap');
+  assert(typeof wasmExports['wasm_vpn_kem_get_secret'] != 'undefined', 'missing Wasm export: wasm_vpn_kem_get_secret');
   assert(typeof wasmExports['wasm_vpn_shutdown'] != 'undefined', 'missing Wasm export: wasm_vpn_shutdown');
   assert(typeof wasmExports['wasm_vpn_configure_json'] != 'undefined', 'missing Wasm export: wasm_vpn_configure_json');
   assert(typeof wasmExports['wasm_vpn_initiate'] != 'undefined', 'missing Wasm export: wasm_vpn_initiate');
@@ -7333,6 +7340,10 @@ function assignWasmExports(wasmExports) {
   _free = Module['_free'] = createExportWrapper('free', 1);
   _wasm_vpn_ml_dsa_selftest = Module['_wasm_vpn_ml_dsa_selftest'] = createExportWrapper('wasm_vpn_ml_dsa_selftest', 0);
   _wasm_vpn_ml_kem_selftest = Module['_wasm_vpn_ml_kem_selftest'] = createExportWrapper('wasm_vpn_ml_kem_selftest', 0);
+  _wasm_vpn_kem_alice_init = Module['_wasm_vpn_kem_alice_init'] = createExportWrapper('wasm_vpn_kem_alice_init', 2);
+  _wasm_vpn_kem_bob_encap = Module['_wasm_vpn_kem_bob_encap'] = createExportWrapper('wasm_vpn_kem_bob_encap', 4);
+  _wasm_vpn_kem_alice_decap = Module['_wasm_vpn_kem_alice_decap'] = createExportWrapper('wasm_vpn_kem_alice_decap', 2);
+  _wasm_vpn_kem_get_secret = Module['_wasm_vpn_kem_get_secret'] = createExportWrapper('wasm_vpn_kem_get_secret', 2);
   _wasm_vpn_shutdown = Module['_wasm_vpn_shutdown'] = createExportWrapper('wasm_vpn_shutdown', 0);
   _wasm_vpn_configure_json = Module['_wasm_vpn_configure_json'] = createExportWrapper('wasm_vpn_configure_json', 1);
   _wasm_vpn_initiate = Module['_wasm_vpn_initiate'] = createExportWrapper('wasm_vpn_initiate', 0);
