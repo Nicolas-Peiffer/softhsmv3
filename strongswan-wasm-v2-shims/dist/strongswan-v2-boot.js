@@ -7194,12 +7194,13 @@ function wasm_vpn_emit(type,payload) { if (typeof Module.onVpnEvent === 'functio
 // Imports from the Wasm binary.
 var _wasm_vpn_boot = Module['_wasm_vpn_boot'] = makeInvalidEarlyAccess('_wasm_vpn_boot');
 var _wasm_vpn_pkcs11_probe = Module['_wasm_vpn_pkcs11_probe'] = makeInvalidEarlyAccess('_wasm_vpn_pkcs11_probe');
+var _wasm_vpn_list_pqc_mechanisms = Module['_wasm_vpn_list_pqc_mechanisms'] = makeInvalidEarlyAccess('_wasm_vpn_list_pqc_mechanisms');
+var _free = Module['_free'] = makeInvalidEarlyAccess('_free');
 var _wasm_vpn_shutdown = Module['_wasm_vpn_shutdown'] = makeInvalidEarlyAccess('_wasm_vpn_shutdown');
 var _wasm_vpn_configure_json = Module['_wasm_vpn_configure_json'] = makeInvalidEarlyAccess('_wasm_vpn_configure_json');
 var _wasm_vpn_initiate = Module['_wasm_vpn_initiate'] = makeInvalidEarlyAccess('_wasm_vpn_initiate');
 var _wasm_vpn_get_result = Module['_wasm_vpn_get_result'] = makeInvalidEarlyAccess('_wasm_vpn_get_result');
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
-var _free = Module['_free'] = makeInvalidEarlyAccess('_free');
 var _malloc = Module['_malloc'] = makeInvalidEarlyAccess('_malloc');
 var _ntohs = makeInvalidEarlyAccess('_ntohs');
 var _htons = makeInvalidEarlyAccess('_htons');
@@ -7260,12 +7261,13 @@ var wasmMemory = makeInvalidEarlyAccess('wasmMemory');
 function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['wasm_vpn_boot'] != 'undefined', 'missing Wasm export: wasm_vpn_boot');
   assert(typeof wasmExports['wasm_vpn_pkcs11_probe'] != 'undefined', 'missing Wasm export: wasm_vpn_pkcs11_probe');
+  assert(typeof wasmExports['wasm_vpn_list_pqc_mechanisms'] != 'undefined', 'missing Wasm export: wasm_vpn_list_pqc_mechanisms');
+  assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
   assert(typeof wasmExports['wasm_vpn_shutdown'] != 'undefined', 'missing Wasm export: wasm_vpn_shutdown');
   assert(typeof wasmExports['wasm_vpn_configure_json'] != 'undefined', 'missing Wasm export: wasm_vpn_configure_json');
   assert(typeof wasmExports['wasm_vpn_initiate'] != 'undefined', 'missing Wasm export: wasm_vpn_initiate');
   assert(typeof wasmExports['wasm_vpn_get_result'] != 'undefined', 'missing Wasm export: wasm_vpn_get_result');
   assert(typeof wasmExports['__main_argc_argv'] != 'undefined', 'missing Wasm export: __main_argc_argv');
-  assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
   assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
   assert(typeof wasmExports['ntohs'] != 'undefined', 'missing Wasm export: ntohs');
   assert(typeof wasmExports['htons'] != 'undefined', 'missing Wasm export: htons');
@@ -7323,12 +7325,13 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
   _wasm_vpn_boot = Module['_wasm_vpn_boot'] = createExportWrapper('wasm_vpn_boot', 0);
   _wasm_vpn_pkcs11_probe = Module['_wasm_vpn_pkcs11_probe'] = createExportWrapper('wasm_vpn_pkcs11_probe', 0);
+  _wasm_vpn_list_pqc_mechanisms = Module['_wasm_vpn_list_pqc_mechanisms'] = createExportWrapper('wasm_vpn_list_pqc_mechanisms', 0);
+  _free = Module['_free'] = createExportWrapper('free', 1);
   _wasm_vpn_shutdown = Module['_wasm_vpn_shutdown'] = createExportWrapper('wasm_vpn_shutdown', 0);
   _wasm_vpn_configure_json = Module['_wasm_vpn_configure_json'] = createExportWrapper('wasm_vpn_configure_json', 1);
   _wasm_vpn_initiate = Module['_wasm_vpn_initiate'] = createExportWrapper('wasm_vpn_initiate', 0);
   _wasm_vpn_get_result = Module['_wasm_vpn_get_result'] = createExportWrapper('wasm_vpn_get_result', 0);
   _main = Module['_main'] = createExportWrapper('__main_argc_argv', 2);
-  _free = Module['_free'] = createExportWrapper('free', 1);
   _malloc = Module['_malloc'] = createExportWrapper('malloc', 1);
   _ntohs = createExportWrapper('ntohs', 1);
   _htons = createExportWrapper('htons', 1);

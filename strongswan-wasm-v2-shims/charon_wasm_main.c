@@ -190,6 +190,69 @@ int wasm_vpn_pkcs11_probe(void)
     return (int)slot_count;
 }
 
+/* ── Mechanism list — confirm ML-DSA + ML-KEM are available in WASM ─────── */
+
+/* OIDs match strongswan-pkcs11/pkcs11.h exactly — same fork as the native
+ * sandbox, so if the sandbox works these are the values softhsmv3
+ * advertises. There is no separate ML-KEM keypair-gen OID in our fork;
+ * CKM_ML_KEM covers both keygen and encap (strongswan-pkcs11/pkcs11_kem.c
+ * line 247-248). ML-DSA uses a separate keypair-gen mechanism for legacy
+ * PKCS#11 template compatibility. */
+#define CKM_ML_DSA                 0x0000001DUL
+#define CKM_ML_DSA_KEY_PAIR_GEN    0x0000001CUL
+#define CKM_ML_KEM                 0x00001058UL
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_list_pqc_mechanisms(void)
+{
+    CK_FUNCTION_LIST *p11 = NULL;
+    if (C_GetFunctionList(&p11) != CKR_OK || !p11) return -1;
+
+    /* Ensure initialized (Phase 2 probe already ran C_Initialize, but be
+     * defensive if the caller reuses a fresh session). */
+    CK_C_INITIALIZE_ARGS args = { 0 };
+    args.flags = CKF_OS_LOCKING_OK;
+    (void)p11->C_Initialize(&args);  /* idempotent via CKR_CRYPTOKI_ALREADY_INITIALIZED */
+
+    CK_SLOT_ID slot_id;
+    CK_ULONG slot_count = 1;
+    if (p11->C_GetSlotList(CK_TRUE, &slot_id, &slot_count) != CKR_OK ||
+        slot_count == 0) {
+        wasm_vpn_emit("error", "no slots with token present");
+        return -1;
+    }
+
+    CK_ULONG mech_count = 0;
+    p11->C_GetMechanismList(slot_id, NULL, &mech_count);
+    if (mech_count == 0) {
+        wasm_vpn_emit("error", "token reports zero mechanisms");
+        return -1;
+    }
+
+    CK_MECHANISM_TYPE *mechs = calloc(mech_count, sizeof(CK_MECHANISM_TYPE));
+    if (!mechs) return -1;
+    p11->C_GetMechanismList(slot_id, mechs, &mech_count);
+
+    int have_mldsa = 0, have_mldsa_kg = 0, have_mlkem = 0;
+    for (CK_ULONG i = 0; i < mech_count; i++) {
+        if (mechs[i] == CKM_ML_DSA)              have_mldsa    = 1;
+        if (mechs[i] == CKM_ML_DSA_KEY_PAIR_GEN) have_mldsa_kg = 1;
+        if (mechs[i] == CKM_ML_KEM)              have_mlkem    = 1;
+    }
+    free(mechs);
+
+    char info[256];
+    snprintf(info, sizeof(info),
+             "%lu mechanisms total; ML-DSA=%d (keygen=%d) ML-KEM=%d",
+             (unsigned long)mech_count, have_mldsa, have_mldsa_kg, have_mlkem);
+    wasm_vpn_emit("mechanisms", info);
+
+    /* Bitmask: bit0 = ML-DSA sign, bit1 = ML-DSA keygen, bit2 = ML-KEM. */
+    return (have_mldsa    ? 1 : 0)
+         | (have_mldsa_kg ? 2 : 0)
+         | (have_mlkem    ? 4 : 0);
+}
+
 EMSCRIPTEN_KEEPALIVE
 int wasm_vpn_shutdown(void)
 {
