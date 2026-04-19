@@ -32,6 +32,9 @@
 
 #include <library.h>
 #include <utils/debug.h>
+#include <plugins/plugin_loader.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 /* softhsmv3 static entry point — resolved by pkcs11_static.c's dlsym shim */
 #include "pkcs11.h"
@@ -78,16 +81,29 @@ static int g_initialized = 0;
 
 /* ── Exported: lifecycle ──────────────────────────────────────────────────── */
 
-/* Write a minimal strongswan.conf to MEMFS at /tmp/strongswan.conf so
- * library_init has something to parse instead of erroring on the missing
- * compile-time default path.  This is the in-browser equivalent of the
- * install-step `make install` writes in a native build. */
+/* Seed MEMFS with the config + token-dir layout both strongSwan and
+ * softhsmv3 expect.  On a native install these are written by `make
+ * install` and created by `softhsm2-util --init-token`.  In the browser
+ * we fabricate them at boot. */
 static int write_memfs_conf(void)
 {
+    /* strongswan.conf for library_init. */
     FILE *f = fopen("/tmp/strongswan.conf", "w");
     if (!f) return -1;
     fputs(WASM_STRONGSWAN_CONF, f);
     fclose(f);
+
+    /* softhsm3.conf — points at an in-MEMFS token directory.  Required
+     * because softhsmv3's C_Initialize reads SOFTHSM2_CONF (same env var
+     * name the v3 fork kept) to locate the tokens. */
+    mkdir("/tmp/softhsm-tokens", 0755);
+    f = fopen("/tmp/softhsm.conf", "w");
+    if (!f) return -1;
+    fputs("directories.tokendir = /tmp/softhsm-tokens\n"
+          "objectstore.backend = file\n"
+          "log.level = INFO\n", f);
+    fclose(f);
+    setenv("SOFTHSM2_CONF", "/tmp/softhsm.conf", 1);
     return 0;
 }
 
@@ -112,9 +128,66 @@ int wasm_vpn_boot(void)
         return -1;
     }
 
+    /* Load crypto + PKCS#11 plugins.  pem/pkcs1/pkcs8/x509 handle key
+     * serialization; openssl provides crypto primitives; pkcs11 wires
+     * softhsmv3 through the static dlopen shim. */
+    if (!lib->plugins->load(lib->plugins,
+            "pem pkcs1 pkcs8 x509 pkcs11 nonce kdf openssl random "
+            "constraints revocation")) {
+        wasm_vpn_emit("error", "plugin load failed");
+        library_deinit();
+        return -1;
+    }
+
     g_initialized = 1;
-    wasm_vpn_emit("booted", "library_init succeeded");
+    wasm_vpn_emit("booted", "library_init + plugins loaded");
     return 0;
+}
+
+/* ── PKCS#11 probe ─────────────────────────────────────────────────────────
+ * Enumerates slots from softhsmv3 via the statically-linked C_GetFunctionList.
+ * Returns the slot count or -1 on error. */
+
+EMSCRIPTEN_KEEPALIVE
+int wasm_vpn_pkcs11_probe(void)
+{
+    CK_FUNCTION_LIST *p11 = NULL;
+    CK_RV rv = C_GetFunctionList(&p11);
+    if (rv != CKR_OK || !p11) {
+        wasm_vpn_emit("error", "C_GetFunctionList failed");
+        return -1;
+    }
+
+    CK_C_INITIALIZE_ARGS args = {
+        .CreateMutex  = NULL,
+        .DestroyMutex = NULL,
+        .LockMutex    = NULL,
+        .UnlockMutex  = NULL,
+        .flags        = CKF_OS_LOCKING_OK,
+        .pReserved    = NULL,
+    };
+    rv = p11->C_Initialize(&args);
+    if (rv != CKR_OK && rv != CKR_CRYPTOKI_ALREADY_INITIALIZED) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "C_Initialize rv=0x%lx", (unsigned long)rv);
+        wasm_vpn_emit("error", msg);
+        return -1;
+    }
+
+    CK_ULONG slot_count = 0;
+    rv = p11->C_GetSlotList(CK_FALSE, NULL, &slot_count);
+    if (rv != CKR_OK) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "C_GetSlotList rv=0x%lx", (unsigned long)rv);
+        wasm_vpn_emit("error", msg);
+        return -1;
+    }
+
+    char info[128];
+    snprintf(info, sizeof(info), "softhsmv3 reports %lu slot(s)",
+             (unsigned long)slot_count);
+    wasm_vpn_emit("pkcs11_probe", info);
+    return (int)slot_count;
 }
 
 EMSCRIPTEN_KEEPALIVE
