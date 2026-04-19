@@ -14,6 +14,42 @@ file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/
   the other PKCS#11 connectors (`strongswan-pkcs11/`, `JavaJCE/`, `openpgp/`,
   `webrpc/`). Build now runs from the hsm root:
   `bash openssh-pkcs11/scripts/build-wasm.sh`.
+- **`scripts/build-wasm.sh` — major Emscripten-portability fixes (partial):**
+  - Dropped `-s SHARED_MEMORY=1` / `-s PTHREAD_POOL_SIZE=2`. softhsmv3 and
+    OpenSSL WASM archives were compiled single-threaded (no `+atomics` Wasm
+    feature), so pthread-enabled linkage was refused by wasm-ld. JS-side
+    `SharedArrayBuffer` transport via `socket_wasm.c` still works through
+    asyncify imports.
+  - Added `--host=wasm32-unknown-emscripten` and `--without-openssl-header-check`.
+  - Post-autoreconf Python patch injects `cross_compiling=yes` into `configure`
+    right before the OpenSSL header/library version tests. Needed because
+    emcc's node fallback lets autoconf's probes "run" (reading/writing
+    MEMFS, not host FS), which confuses the version-detection conftest.
+  - Expanded CFLAGS with `-Wno-error=` for clang 15+ default-errors:
+    `implicit-function-declaration`, `int-conversion`,
+    `incompatible-pointer-types`, `incompatible-function-pointer-types`,
+    `implicit-int`, `deprecated-declarations`.
+  - Added 18 `ac_cv_func_*=no` / `ac_cv_header_*=no` autoconf-cache
+    overrides so OpenSSH routes BSD functions (`arc4random`, `bcrypt_pbkdf`,
+    `recallocarray`, `strtonum`, `fmt_scaled`, `readpassphrase`, `closefrom`,
+    `freezero`, `timingsafe_bcmp`, `nlist`, `getrrsetbyname`) through
+    `openbsd-compat/` instead of linking to Emscripten's header-less musl
+    symbols.
+
+### Known Issues
+
+- **Full WASM build does not complete yet.** Build gets through sshd
+  `emconfigure` cleanly and into `emmake`, but stops with `dns.c` errors
+  complaining that `struct rrsetinfo`, `ERRSET_*`, and `RRSET_VALIDATED` are
+  undeclared. The `ac_cv_func_getrrsetbyname=no` cache override was silently
+  ignored by autoconf (`config.h` still shows `HAVE_GETRRSETBYNAME 1`) — the
+  check is gated by a non-cached probe that needs further investigation.
+  Possible follow-ups: patch `dns.c` to unconditionally include
+  `openbsd-compat/getrrsetbyname.h`, or compile with `-DHAVE_GETRRSETBYNAME=0`
+  and adjust the `openbsd-compat/Makefile.in` to include the replacement.
+  Additional BSD-specific quirks may surface once `dns.c` compiles. Artifacts
+  in `pqctoday-hub/public/wasm/openssh-{client,server}.{js,wasm}` are still
+  the pre-move build; hub UI shows "Build in progress" notice.
 
 ### Added
 

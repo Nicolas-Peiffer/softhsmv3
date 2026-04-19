@@ -69,6 +69,27 @@ cp "$ROOT/wasm-shims/sshd_wasm_main.c" "$OPENSSH_SRC/"
 echo "[openssh-pkcs11] Running autoreconf..."
 (cd "$OPENSSH_SRC" && autoreconf -i 2>/dev/null)
 
+# Force cross_compiling=yes for the OpenSSL header/library version checks.
+# Under emcc, autoconf's AC_PROG_CC detects that conftest programs "run" via
+# node (because emcc emits a JS launcher that node can execute), so it sets
+# cross_compiling=no even with --host=wasm32-unknown-emscripten. But the
+# conftests write to Emscripten MEMFS, not host disk, so the files OpenSSH
+# configure expects (conftest.sslincver, conftest.ssllibver) never appear and
+# the version check errors out. Override the flag right before those checks.
+python3 - "$OPENSSH_SRC/configure" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as fh:
+    text = fh.read()
+marker = '\t# Determine OpenSSL header version'
+inject = '\tcross_compiling=yes\n' + marker
+assert marker in text, 'expected OpenSSL header-version marker in configure'
+assert inject not in text, 'cross_compiling=yes already injected'
+text = text.replace(marker, inject, 1)
+with open(path, 'w') as fh:
+    fh.write(text)
+PYEOF
+
 # ── Step 3: emconfigure ───────────────────────────────────────────────────────
 SOFTHSM_INCLUDE="$HSM_ROOT/src/lib"
 SOFTHSM_PKCS11_H="$HSM_ROOT/src/lib/pkcs11"
@@ -76,16 +97,25 @@ SOFTHSM_PKCS11_H="$HSM_ROOT/src/lib/pkcs11"
 SHARED_LDFLAGS=(
     "-s" "MODULARIZE=1"
     "-s" "ALLOW_MEMORY_GROWTH=1"
-    "-s" "SHARED_MEMORY=1"
-    "-s" "PTHREAD_POOL_SIZE=2"
     "-s" "INITIAL_MEMORY=67108864"
     "-s" "EXPORTED_RUNTIME_METHODS=['cwrap','ccall','UTF8ToString','stringToUTF8','getValue','setValue']"
     "-s" "ASYNCIFY=1"
     "-s" "ASYNCIFY_IMPORTS=['__wasm_read_sab','__wasm_write_sab']"
     "--no-entry"
 )
+# Note: SHARED_MEMORY / PTHREAD_POOL_SIZE are intentionally OFF. softhsmv3 and
+# OpenSSL WASM archives (deps/openssl-wasm/, build-wasm/src/lib/) were compiled
+# single-threaded (no +atomics Wasm feature); mixing in -s SHARED_MEMORY=1 here
+# causes wasm-ld to refuse the link. JS-side SharedArrayBuffer transport via
+# socket_wasm.c still works — it uses asyncify imports, not Wasm shared memory.
 
 COMMON_CFLAGS="-O2 -Wno-error -DWASM_OPENSSH -DSOFTHSM_STATIC_LINKED \
+    -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration \
+    -Wno-int-conversion -Wno-error=int-conversion \
+    -Wno-incompatible-pointer-types -Wno-error=incompatible-pointer-types \
+    -Wno-incompatible-function-pointer-types -Wno-error=incompatible-function-pointer-types \
+    -Wno-implicit-int -Wno-error=implicit-int \
+    -Wno-deprecated-declarations -Wno-error=deprecated-declarations \
     -I${OPENSSL_WASM}/include \
     -I${SOFTHSM_INCLUDE} \
     -I${SOFTHSM_PKCS11_H}"
@@ -97,9 +127,31 @@ COMMON_LIBS="${SOFTHSM_WASM} \
 echo "[openssh-pkcs11] Configuring (sshd)..."
 mkdir -p "$ROOT/build/sshd-wasm"
 (cd "$ROOT/build/sshd-wasm" && \
+    env \
+        ac_cv_func_arc4random=no \
+        ac_cv_func_arc4random_buf=no \
+        ac_cv_func_arc4random_stir=no \
+        ac_cv_func_arc4random_uniform=no \
+        ac_cv_func_bcrypt_pbkdf=no \
+        ac_cv_func_closefrom=no \
+        ac_cv_func_fmt_scaled=no \
+        ac_cv_func_scan_scaled=no \
+        ac_cv_func_freezero=no \
+        ac_cv_func_nlist=no \
+        ac_cv_func_readpassphrase=no \
+        ac_cv_func_recallocarray=no \
+        ac_cv_func_reallocarray=no \
+        ac_cv_func_strtonum=no \
+        ac_cv_func_timingsafe_bcmp=no \
+        ac_cv_func_getrrsetbyname=no \
+        ac_cv_header_libutil_h=no \
+        ac_cv_header_nlist_h=no \
+        ac_cv_header_readpassphrase_h=no \
     emconfigure "$OPENSSH_SRC/configure" \
+        --host=wasm32-unknown-emscripten \
         --disable-shared --enable-static \
         --with-ssl-dir="$OPENSSL_WASM" \
+        --without-openssl-header-check \
         --without-pam --without-selinux --without-zlib \
         --without-shadow --without-audit --without-libedit \
         --disable-strip \
@@ -109,9 +161,31 @@ mkdir -p "$ROOT/build/sshd-wasm"
 echo "[openssh-pkcs11] Configuring (ssh client)..."
 mkdir -p "$ROOT/build/ssh-wasm"
 (cd "$ROOT/build/ssh-wasm" && \
+    env \
+        ac_cv_func_arc4random=no \
+        ac_cv_func_arc4random_buf=no \
+        ac_cv_func_arc4random_stir=no \
+        ac_cv_func_arc4random_uniform=no \
+        ac_cv_func_bcrypt_pbkdf=no \
+        ac_cv_func_closefrom=no \
+        ac_cv_func_fmt_scaled=no \
+        ac_cv_func_scan_scaled=no \
+        ac_cv_func_freezero=no \
+        ac_cv_func_nlist=no \
+        ac_cv_func_readpassphrase=no \
+        ac_cv_func_recallocarray=no \
+        ac_cv_func_reallocarray=no \
+        ac_cv_func_strtonum=no \
+        ac_cv_func_timingsafe_bcmp=no \
+        ac_cv_func_getrrsetbyname=no \
+        ac_cv_header_libutil_h=no \
+        ac_cv_header_nlist_h=no \
+        ac_cv_header_readpassphrase_h=no \
     emconfigure "$OPENSSH_SRC/configure" \
+        --host=wasm32-unknown-emscripten \
         --disable-shared --enable-static \
         --with-ssl-dir="$OPENSSL_WASM" \
+        --without-openssl-header-check \
         --without-pam --without-selinux --without-zlib \
         --without-shadow --without-audit --without-libedit \
         --disable-strip \
