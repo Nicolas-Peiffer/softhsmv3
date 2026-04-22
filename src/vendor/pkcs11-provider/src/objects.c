@@ -911,12 +911,23 @@ static CK_RV decode_ec_point(CK_KEY_TYPE key_type, CK_ATTRIBUTE *attr,
         }
     }
 
-    ec_point->data = octet->data;
-    ec_point->length = octet->length;
-
-    /* moved octet data, do not free it */
-    octet->data = NULL;
-    octet->length = 0;
+    {
+        /* ASN1_OCTET_STRING is opaque in recent OpenSSL — go through the
+         * accessor API and copy the data out (small: EC-point sized). */
+        const unsigned char *oct_data = ASN1_STRING_get0_data(octet);
+        int oct_len = ASN1_STRING_length(octet);
+        if (oct_len > 0 && oct_data) {
+            ec_point->data = OPENSSL_memdup(oct_data, (size_t)oct_len);
+            if (!ec_point->data) {
+                ret = CKR_HOST_MEMORY;
+                goto done;
+            }
+            ec_point->length = oct_len;
+        } else {
+            ec_point->data = NULL;
+            ec_point->length = 0;
+        }
+    }
 
     ret = CKR_OK;
 done:
@@ -3885,9 +3896,10 @@ static CK_RV return_dup_key(P11PROV_OBJ *dst, P11PROV_OBJ *src)
 static CK_RV fix_ec_key_import(P11PROV_OBJ *key, int allocattrs)
 {
     CK_ATTRIBUTE *pub;
-    ASN1_OCTET_STRING oct;
+    ASN1_OCTET_STRING *oct = NULL;
     unsigned char *der = NULL;
     int len;
+    CK_RV ret = CKR_KEY_INDIGESTIBLE;
 
     if (key->numattrs >= allocattrs) {
         P11PROV_raise(key->ctx, CKR_GENERAL_ERROR,
@@ -3902,15 +3914,23 @@ static CK_RV fix_ec_key_import(P11PROV_OBJ *key, int allocattrs)
         return CKR_KEY_INDIGESTIBLE;
     }
 
-    oct.data = pub->pValue;
-    oct.length = pub->ulValueLen;
-    oct.flags = 0;
+    /* ASN1_OCTET_STRING is opaque in recent OpenSSL — allocate, populate
+     * via the accessor API, then encode. */
+    oct = ASN1_OCTET_STRING_new();
+    if (!oct) {
+        return CKR_HOST_MEMORY;
+    }
+    if (ASN1_OCTET_STRING_set(oct, pub->pValue, (int)pub->ulValueLen) != 1) {
+        P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
+                      "Failure to set EC point octets");
+        goto done;
+    }
 
-    len = i2d_ASN1_OCTET_STRING(&oct, &der);
+    len = i2d_ASN1_OCTET_STRING(oct, &der);
     if (len < 0) {
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Failure to encode EC point to DER");
-        return CKR_KEY_INDIGESTIBLE;
+        goto done;
     }
     key->attrs[key->numattrs].type = CKA_EC_POINT;
     key->attrs[key->numattrs].pValue = der;
@@ -3918,8 +3938,11 @@ static CK_RV fix_ec_key_import(P11PROV_OBJ *key, int allocattrs)
     key->numattrs++;
 
     P11PROV_debug("fixing EC key %p import", key);
+    ret = CKR_OK;
 
-    return CKR_OK;
+done:
+    ASN1_OCTET_STRING_free(oct);
+    return ret;
 }
 
 static CK_RV p11prov_obj_import_public_key(P11PROV_OBJ *key, CK_KEY_TYPE type,
@@ -5225,7 +5248,7 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
     CK_ATTRIBUTE *pub;
     CK_ATTRIBUTE *ecpoint;
     CK_ATTRIBUTE new_pub;
-    ASN1_OCTET_STRING oct;
+    ASN1_OCTET_STRING *oct = NULL;
     unsigned char *der = NULL;
     int add_attrs = 0;
     int len;
@@ -5308,11 +5331,22 @@ CK_RV p11prov_obj_set_ec_encoded_public_key(P11PROV_OBJ *key,
         return rv;
     }
 
-    oct.data = (unsigned char *)pubkey;
-    oct.length = (int)pubkey_len;
-    oct.flags = 0;
+    /* ASN1_OCTET_STRING is opaque in recent OpenSSL — allocate + populate
+     * via the accessor API. */
+    oct = ASN1_OCTET_STRING_new();
+    if (!oct) {
+        return CKR_HOST_MEMORY;
+    }
+    if (ASN1_OCTET_STRING_set(oct, (const unsigned char *)pubkey,
+                              (int)pubkey_len) != 1) {
+        P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
+                      "Failure to set EC point octets");
+        ASN1_OCTET_STRING_free(oct);
+        return CKR_KEY_INDIGESTIBLE;
+    }
 
-    len = i2d_ASN1_OCTET_STRING(&oct, &der);
+    len = i2d_ASN1_OCTET_STRING(oct, &der);
+    ASN1_OCTET_STRING_free(oct);
     if (len < 0) {
         P11PROV_raise(key->ctx, CKR_KEY_INDIGESTIBLE,
                       "Failure to encode EC point to DER");
