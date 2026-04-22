@@ -34,6 +34,11 @@
 #include <utils/debug.h>
 #include <plugins/plugin_loader.h>
 #include <crypto/key_exchange.h>
+#include <crypto/proposal/proposal.h>
+#include <credentials/credential_manager.h>
+#include <credentials/keys/public_key.h>
+#include <credentials/certificates/certificate.h>
+#include <credentials/certificates/x509.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -589,6 +594,119 @@ const char *wasm_vpn_get_result(void)
 {
     /* TODO Phase 3: return JSON with handshake_established, timings, sizes. */
     return "{\"phase\":\"boot\",\"status\":\"stub\"}";
+}
+
+/* ── Phase 3a: deterministic validation exports ─────────────────────────────
+ * These don't run a full IKE handshake, but they DO exercise real charon
+ * library calls to prove the WASM build recognizes ML-DSA OIDs (plan 1) and
+ * accepts ML-KEM / IKE_INTERMEDIATE-eligible proposals (plan 2).  Safe to
+ * call any time after wasm_vpn_boot() has run library_init().
+ */
+
+/* Buffer for validation JSON replies. */
+static char g_validation_buf[1024];
+
+EMSCRIPTEN_KEEPALIVE
+const char *wasm_vpn_validate_proposal(const char *proposal_str)
+{
+    if (!g_initialized) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"library_not_initialized\"}");
+        return g_validation_buf;
+    }
+    if (!proposal_str || !*proposal_str) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"empty_proposal\"}");
+        return g_validation_buf;
+    }
+
+    proposal_t *prop = proposal_create_from_string(PROTO_IKE, proposal_str);
+    if (!prop) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"parse_failed\",\"input\":\"%.128s\"}",
+                 proposal_str);
+        return g_validation_buf;
+    }
+
+    /* Walk transforms and report which ML-KEM / DH methods were accepted. */
+    uint16_t alg = 0;
+    int has_mlkem = 0;
+    enumerator_t *e = prop->create_enumerator(prop, KEY_EXCHANGE_METHOD);
+    while (e->enumerate(e, &alg, NULL)) {
+        if (alg == ML_KEM_512 || alg == ML_KEM_768 || alg == ML_KEM_1024) {
+            has_mlkem = 1;
+            break;
+        }
+    }
+    e->destroy(e);
+
+    snprintf(g_validation_buf, sizeof(g_validation_buf),
+             "{\"valid\":true,\"has_ml_kem\":%s,\"proposal\":\"%.128s\"}",
+             has_mlkem ? "true" : "false", proposal_str);
+    prop->destroy(prop);
+    return g_validation_buf;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char *wasm_vpn_validate_cert(const char *pem_str, int pem_len)
+{
+    if (!g_initialized) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"library_not_initialized\"}");
+        return g_validation_buf;
+    }
+    if (!pem_str || pem_len <= 0) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"empty_cert\"}");
+        return g_validation_buf;
+    }
+
+    chunk_t blob = chunk_create((u_char *)pem_str, (size_t)pem_len);
+    certificate_t *cert = lib->creds->create(lib->creds,
+                                             CRED_CERTIFICATE, CERT_X509,
+                                             BUILD_BLOB_PEM, blob,
+                                             BUILD_END);
+    if (!cert) {
+        snprintf(g_validation_buf, sizeof(g_validation_buf),
+                 "{\"valid\":false,\"error\":\"cert_parse_failed\"}");
+        return g_validation_buf;
+    }
+
+    public_key_t *pub = cert->get_public_key(cert);
+    const char *type_name = "unknown";
+    int is_ml_dsa = 0;
+    if (pub) {
+        switch (pub->get_type(pub)) {
+            case KEY_RSA:         type_name = "rsa";         break;
+            case KEY_ECDSA:       type_name = "ecdsa";       break;
+            case KEY_ED25519:     type_name = "ed25519";     break;
+            case KEY_ML_DSA_44:   type_name = "ml-dsa-44";   is_ml_dsa = 1; break;
+            case KEY_ML_DSA_65:   type_name = "ml-dsa-65";   is_ml_dsa = 1; break;
+            case KEY_ML_DSA_87:   type_name = "ml-dsa-87";   is_ml_dsa = 1; break;
+            default: break;
+        }
+        pub->destroy(pub);
+    }
+
+    snprintf(g_validation_buf, sizeof(g_validation_buf),
+             "{\"valid\":true,\"key_type\":\"%s\",\"is_ml_dsa\":%s}",
+             type_name, is_ml_dsa ? "true" : "false");
+    cert->destroy(cert);
+    return g_validation_buf;
+}
+
+EMSCRIPTEN_KEEPALIVE
+const char *wasm_vpn_list_key_exchanges(void)
+{
+    /* Returns the numeric IKE transform IDs that charon recognizes for
+     * KEY_EXCHANGE_METHOD, so the JS caller can confirm ML-KEM-{512,768,1024}
+     * (IDs 35, 36, 37 per draft-ietf-ipsecme-ikev2-mlkem) are in the list. */
+    snprintf(g_validation_buf, sizeof(g_validation_buf),
+             "{\"ml_kem_512\":%d,\"ml_kem_768\":%d,\"ml_kem_1024\":%d,"
+             "\"curve25519\":%d,\"ecp_256\":%d,\"ecp_384\":%d}",
+             ML_KEM_512, ML_KEM_768, ML_KEM_1024,
+             CURVE_25519, ECP_256_BIT, ECP_384_BIT);
+    return g_validation_buf;
 }
 
 /* ── Satisfy the linker — Emscripten always calls main() ──────────────────── */

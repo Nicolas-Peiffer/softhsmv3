@@ -8,6 +8,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **strongSwan WASM Phase 3a validation exports** (`strongswan-wasm-v2-shims/charon_wasm_main.c`):
+  Three new `EMSCRIPTEN_KEEPALIVE` functions exercise real charon library
+  calls inside the WASM binary and return JSON status strings.
+  - `wasm_vpn_validate_proposal(str)` — drives `proposal_create_from_string(PROTO_IKE, …)`
+    and walks `KEY_EXCHANGE_METHOD` transforms to detect ML-KEM (IDs 35/36/37
+    per draft-ietf-ipsecme-ikev2-mlkem). Returns `{"valid":bool,"has_ml_kem":bool}`.
+  - `wasm_vpn_validate_cert(pem, len)` — parses a PEM cert via
+    `lib->creds->create(CRED_CERTIFICATE, CERT_X509, BUILD_BLOB_PEM)` and
+    reports the recognized key type. When the SubjectPublicKeyInfo carries
+    RFC 9881 ML-DSA OIDs, `is_ml_dsa:true` is returned.
+  - `wasm_vpn_list_key_exchanges()` — dumps the numeric transform IDs for
+    ML-KEM and classical groups.
+
+  All three are linked into `strongswan-v2-boot.{js,wasm}` via
+  `scripts/build-strongswan-wasm-v2.sh` (EXPORTED_FUNCTIONS updated).
+  These close plans 1 (ML-DSA OID recognition) and 2 (IKE_INTERMEDIATE /
+  ML-KEM transform IDs) of the hub-vs-sandbox VPN simulator gap audit at
+  the library-validation level, ahead of the full Phase 3b+ IKE driver.
+
 ### Fixed
 
 - **strongswan-pkcs11 ECDH use-after-free** (`strongswan-pkcs11/pkcs11_dh.c`): Upstream strongSwan
