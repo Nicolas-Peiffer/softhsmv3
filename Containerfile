@@ -88,7 +88,9 @@ RUN set -e; \
         gengetopt \
         libssl-dev \
         pcscd \
-        libpcsclite-dev && \
+        libpcsclite-dev \
+        ca-certificates \
+        && \
     cd /tmp && \
     git clone https://github.com/OpenSC/OpenSC.git && \
     cd OpenSC && \
@@ -153,6 +155,12 @@ COPY --from=openssl-builder /opt/openssl4 /opt/openssl4
 
 # Copy SoftHSMv3 from Stage 2
 COPY --from=softhsm-builder /opt/softhsmv3 /opt/softhsmv3
+
+# Copy OpenSC from Stage 3
+COPY --from=opensc-builder /opt/opensc /opt/opensc
+
+# Link opensc utility symlinks
+RUN ln -s /opt/opensc/bin/pkcs11-tool /usr/local/bin/pkcs11-tool
 
 # Link openssl4 command for side-by-side coexistency
 RUN ln -s /opt/openssl4/bin/openssl /usr/local/bin/openssl4
