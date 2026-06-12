@@ -72,7 +72,33 @@ RUN set -e; \
     make install
 
 # ==========================================
-# STAGE 3: Final Runtime Environment (with Demo Script)
+# STAGE 3: Latest OpenSC Builder (With ML-KEM Support)
+# ==========================================
+FROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_IMAGE_TAG} AS opensc-builder
+RUN set -e; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        automake \
+        libtool \
+        pkg-config \
+        git \
+        gengetopt \
+        libssl-dev \
+        pcscd \
+        libpcsclite-dev && \
+    cd /tmp && \
+    git clone https://github.com/OpenSC/OpenSC.git && \
+    cd OpenSC && \
+    ./bootstrap && \
+    ./configure --prefix=/opt/opensc --sysconfdir=/etc/opensc --disable-reader-driver --disable-crypto && \
+    make -j$(nproc) && \
+    make install
+
+# ==========================================
+# STAGE 4: Final Runtime Environment (with Demo Script)
 # ==========================================
 FROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_IMAGE_TAG} AS runtime
 
@@ -119,7 +145,7 @@ RUN echo 'NAME="Linux Mint"\nVERSION="22.3 (Zena)"\nID=linuxmint\nID_LIKE="ubunt
 RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g \
         ca-certificates \
-        opensc && \
+        && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy OpenSSL 4 from Stage 1
