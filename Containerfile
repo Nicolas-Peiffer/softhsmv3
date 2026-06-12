@@ -142,33 +142,34 @@ ENV SOFTHSM2_CONF="/etc/softhsm2.conf"
 # ==========================================
 # 4. Inject Automated PQC Test Demo Script
 # ==========================================
+# Inject Automated PQC Test Demo Script
 RUN echo '#!/usr/bin/env bash\n\
 set -e\n\
-MODULE_PATH="/opt/softhsmv3/lib/libsofthsmv3.so"\n\
 \n\
 echo "======================================================="\n\
 echo " 1. Initializing SoftHSMv3 Token Store (Slot 0)       "\n\
 echo "======================================================="\n\
 /opt/softhsmv3/bin/softhsm2-util --init-token --slot 0 --label "PQCToken" --pin 1234 --so-pin 4321\n\
 \n\
-echo -e "\n======================================================="\n\
+echo -e "\\n======================================================="\n\
 echo " 2. Listing Active Slots & Verifying Token            "\n\
 echo "======================================================="\n\
-pkcs11-tool --module \$MODULE_PATH --list-slots\n\
+pkcs11-tool --module /opt/softhsmv3/lib/softhsm/libsofthsmv3.so --list-slots\n\
 \n\
-echo -e "\n======================================================="\n\
+echo -e "\\n======================================================="\n\
 echo " 3. Generating Post-Quantum ML-KEM-768 Key Pair        "\n\
 echo "======================================================="\n\
-pkcs11-tool --module \$MODULE_PATH \\\n\
+pkcs11-tool --module /opt/softhsmv3/lib/softhsm/libsofthsmv3.so \\\n\
             --login --pin 1234 \\\n\
+            --token "PQCToken" \\\n\
             --keypairgen --key-type ML-KEM-768 \\\n\
             --label "my-pqc-key" --id 01\n\
 \n\
-echo -e "\n======================================================="\n\
+echo -e "\\n======================================================="\n\
 echo " 4. Listing Objects inside the PKCS#11 Store          "\n\
 echo "======================================================="\n\
-pkcs11-tool --module \$MODULE_PATH --list-objects\n\
-echo -e "\n=== Demo Completed Successfully ==="\n\
+pkcs11-tool --module /opt/softhsmv3/lib/softhsm/libsofthsmv3.so --list-objects --token "PQCToken"\n\
+echo -e "\\n=== Demo Completed Successfully ===\\n"\n\
 ' > /usr/local/bin/run-pqc-demo.sh && \
     chmod +x /usr/local/bin/run-pqc-demo.sh
 
@@ -181,7 +182,7 @@ echo -e "\\033[1;32m Welcome to your Linux Mint 22.3 PQC Development Container! 
 echo -e "\\033[1;36m==================================================================\\033[0m"\n\
 echo -e " Available Stacks:"\n\
 echo -e "  • OpenSSL Binary:     \\033[1;33mopenssl4\\033[0m ($(openssl4 version))"\n\
-echo -e "  • SoftHSMv3 Library:  \\033[1;33m/opt/softhsmv3/lib/libsofthsmv3.so\\033[0m"\n\
+echo -e "  • SoftHSMv3 Library:  \\033[1;33m/opt/softhsmv3/lib/softhsm/libsofthsmv3.so\\033[0m"\n\
 echo -e "  • OpenSC Utilities:   \\033[1;33mpkcs11-tool\\033[0m"\n\
 echo -e ""\n\
 echo -e "\\033[1;35m[TEST NOTICE]\\033[0m An automated Post-Quantum key generation test is available!"\n\
