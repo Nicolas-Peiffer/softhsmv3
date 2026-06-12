@@ -72,7 +72,7 @@ RUN set -e; \
     make install
 
 # ==========================================
-# STAGE 3: Final Runtime Environment
+# STAGE 3: Final Runtime Environment (with Demo Script)
 # ==========================================
 FROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_IMAGE_TAG} AS runtime
 
@@ -115,10 +115,11 @@ RUN echo 'NAME="Linux Mint"\nVERSION="22.3 (Zena)"\nID=linuxmint\nID_LIKE="ubunt
     mkdir -p /etc/upstream-release && \
     echo 'DISTRIB_ID=Ubuntu\nDISTRIB_RELEASE=24.04\nDISTRIB_CODENAME=noble\nDISTRIB_DESCRIPTION="Ubuntu 24.04 LTS"' > /etc/upstream-release/lsb-release
 
-# Install only basic dynamic runtime dependencies
+# Install dynamic runtime dependencies + opensc tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g \
-        ca-certificates && \
+        ca-certificates \
+        opensc && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy OpenSSL 4 from Stage 1
@@ -130,7 +131,63 @@ COPY --from=softhsm-builder /opt/softhsmv3 /opt/softhsmv3
 # Link openssl4 command for side-by-side coexistency
 RUN ln -s /opt/openssl4/bin/openssl /usr/local/bin/openssl4
 
-# Set up runtime shared library links
+# Set up SoftHSMv3 directory configurations
+RUN mkdir -p /var/lib/softhsm/tokens/ && \
+    echo "directories.tokendir = /var/lib/softhsm/tokens/" > /etc/softhsm2.conf
+
+# Set up global environment paths
 ENV LD_LIBRARY_PATH="/opt/softhsmv3/lib:/opt/openssl4/lib64:/opt/openssl4/lib:$LD_LIBRARY_PATH"
+ENV SOFTHSM2_CONF="/etc/softhsm2.conf"
+
+# ==========================================
+# 4. Inject Automated PQC Test Demo Script
+# ==========================================
+RUN echo '#!/usr/bin/env bash\n\
+set -e\n\
+MODULE_PATH="/opt/softhsmv3/lib/libsofthsmv3.so"\n\
+\n\
+echo "======================================================="\n\
+echo " 1. Initializing SoftHSMv3 Token Store (Slot 0)       "\n\
+echo "======================================================="\n\
+/opt/softhsmv3/bin/softhsm2-util --init-token --slot 0 --label "PQCToken" --pin 1234 --so-pin 4321\n\
+\n\
+echo -e "\n======================================================="\n\
+echo " 2. Listing Active Slots & Verifying Token            "\n\
+echo "======================================================="\n\
+pkcs11-tool --module \$MODULE_PATH --list-slots\n\
+\n\
+echo -e "\n======================================================="\n\
+echo " 3. Generating Post-Quantum ML-KEM-768 Key Pair        "\n\
+echo "======================================================="\n\
+pkcs11-tool --module \$MODULE_PATH \\\n\
+            --login --pin 1234 \\\n\
+            --keypairgen --key-type ML-KEM-768 \\\n\
+            --label "my-pqc-key" --id 01\n\
+\n\
+echo -e "\n======================================================="\n\
+echo " 4. Listing Objects inside the PKCS#11 Store          "\n\
+echo "======================================================="\n\
+pkcs11-tool --module \$MODULE_PATH --list-objects\n\
+echo -e "\n=== Demo Completed Successfully ==="\n\
+' > /usr/local/bin/run-pqc-demo.sh && \
+    chmod +x /usr/local/bin/run-pqc-demo.sh
+
+# ==========================================
+# 5. Inject Message of the Day (MOTD)
+# ==========================================
+RUN echo '\n\
+echo -e "\\033[1;36m==================================================================\\033[0m"\n\
+echo -e "\\033[1;32m Welcome to your Linux Mint 22.3 PQC Development Container!       \\033[0m"\n\
+echo -e "\\033[1;36m==================================================================\\033[0m"\n\
+echo -e " Available Stacks:"\n\
+echo -e "  • OpenSSL Binary:     \\033[1;33mopenssl4\\033[0m ($(openssl4 version))"\n\
+echo -e "  • SoftHSMv3 Library:  \\033[1;33m/opt/softhsmv3/lib/libsofthsmv3.so\\033[0m"\n\
+echo -e "  • OpenSC Utilities:   \\033[1;33mpkcs11-tool\\033[0m"\n\
+echo -e ""\n\
+echo -e "\\033[1;35m[TEST NOTICE]\\033[0m An automated Post-Quantum key generation test is available!"\n\
+echo -e "To create a token store and generate an \\033[1;32mML-KEM-768\\033[0m key, run:"\n\
+echo -e "      \\033[1;32mrun-pqc-demo.sh\\033[0m"\n\
+echo -e "\\033[1;36m==================================================================\\033[0m\\n"\n\
+' >> /etc/bash.bashrc
 
 CMD ["/bin/bash"]
